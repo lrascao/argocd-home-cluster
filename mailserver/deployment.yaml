@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: mailserver
+  name: forwarder
+  labels:
+    app: forwarder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forwarder
+  template:
+    metadata:
+      labels:
+        app: forwarder
+    spec:
+      containers:
+      - name: forwarder
+        image: zixia/simple-mail-forwarder
+        env:
+        - name: SMF_CONFIG
+          value: "@88288338.xyz:luis.rascao+88288338.xyz@gmail.com"
+        - name: SMF_POSTFIXLOG
+          value: "/var/log/postfix.log"
+        - name: SMF_RELAYHOST
+          value: "smtp-relay.brevo.com:587"
+        - name: SMF_POSTFIXMAIN_smtp_sasl_auth_enable
+          value: "yes"
+        - name: SMF_POSTFIXMAIN_smtp_sasl_password_maps
+          value: "static:luis.rascao@gmail.com:"
+        - name: SMF_POSTFIXMAIN_smtp_sasl_security_options
+          value: "noanonymous"
+        ports:
+        - containerPort: 25
+        volumeMounts:
+         - name: certs-forwarder
+           mountPath: "/etc/postfix/cert/"
+           readOnly: true
+         - name: conf-forwarder
+           mountPath: "/var/db/dkim/88288338.xyz/"
+           readOnly: true
+      volumes:
+      - name: certs-forwarder
+        secret:
+          secretName: forwarder
+          items:
+          - key: tls.crt
+            path: smtp.ec.cert
+          - key: tls.key
+            path: smtp.ec.key
+          - key: tls.crt
+            path: smtp.cert
+          - key: tls.key
+            path: smtp.key
+      - name: conf-forwarder
+        configMap:
+          name: forwarder
+          items:
+          - key: dkim.key
+            path: default.txt

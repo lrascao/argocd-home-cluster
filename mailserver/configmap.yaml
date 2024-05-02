@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forwarder
+data:
+  dkim.key: |
+    default._domainkey      IN      TXT     ( "v=DKIM1; k=rsa; "
+          "p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsCUoNLUOSqB8hm5H5ic2NKHk5T+N5Bsu13AqtHRitciDNK12M4SL7bENa5JlQHU3rM4mV1DsTBf47Qfn3ZVZKm2nrYxFyOXTooldMQ2xVNJmla49+IbHZfprUFjy+ToNIOikwz5/rzf/Xs2djZtx/3xiUHC5exz2EB/ub/+WFGj4QXp6xWKRqwaq8LgwtFmV0WEg9HX4FZNV40"
+          "RiBBtsUWpCFgmUELdccFExvHX2kzoG2I+1SBOrtwPDzTL2fE7D3ugrCtOJ25DYHnCxgLGZVtooQ8+RsK1szNZWkLZl1nXFSQBICX0F30/nVaq9wDK9XobBCa7vSwk8vJy5Uh/yewIDAQAB" )  ; ----- DKIM key default for 88288338.xyz
