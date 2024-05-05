@@ -70,6 +70,17 @@ data:
     log_type all
 
     # =================================================================
+    # Security
+    # =================================================================
+    
+    # Boolean value that determines whether clients that connect
+    # without providing a username are allowed to connect. If set to
+    # false then a password file should be created (see the
+    # password_file option) to control authenticated client access.
+    # Defaults to true.
+    allow_anonymous true
+
+    # =================================================================
     # Bridges
     # =================================================================
 
