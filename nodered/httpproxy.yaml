@@ -12,3 +12,9 @@ spec:
     - services:
         - name: nodered
           port: 80
+    - conditions:
+      - prefix: /comms
+      enableWebsockets: true # Setting this to true enables websocket for all paths that match /websocket
+      services:
+      - name: nodered
+        port: 80
