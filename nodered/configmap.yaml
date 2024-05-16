@@ -130,7 +130,7 @@ data:
               type: "credentials",
               users: [{
                   username: "admin",
-                  password: "$2a$08$9zqOHyJq8UMnNLuPKQG5DOrLkpbD/mfRZ92iLmJ6tRJI.O6ULZbxS",
+                  password: "$2a$08$3kjbqkGyTtxtrsuRkYyjKeg3aFZ9iM23ehoxm1j9jbtsl9baUckGC",
                   permissions: "*"
               }]
           },
@@ -139,8 +139,8 @@ data:
           // the static content (httpStatic), the following properties can be used.
           // The pass field is a bcrypt hash of the password.
           // See http://nodered.org/docs/security.html#generating-the-password-hash
-          httpNodeAuth: {user:"user",pass:"$2a$08$9zqOHyJq8UMnNLuPKQG5DOrLkpbD/mfRZ92iLmJ6tRJI.O6ULZbxS"},
-          httpStaticAuth: {user:"user",pass:"$2a$08$9zqOHyJq8UMnNLuPKQG5DOrLkpbD/mfRZ92iLmJ6tRJI.O6ULZbxS"},
+          //httpNodeAuth: {user:"user",pass:"$2a$08$aSxJjNQAxdV5Bl9zovoboOb8x6O/pYmloFm1dIv0ys0KegMs9t2YW"},
+          //httpStaticAuth: {user:"user",pass:"$2a$08$aSxJjNQAxdV5Bl9zovoboOb8x6O/pYmloFm1dIv0ys0KegMs9t2YW"},
 
           // The following property can be used to enable HTTPS
           // See http://nodejs.org/api/https.html#https_https_createserver_options_requestlistener
