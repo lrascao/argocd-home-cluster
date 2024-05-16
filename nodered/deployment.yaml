@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: nodered
+  name: nodered
+  labels:
+    app: nodered
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nodered
+  template:
+    metadata:
+      labels:
+        app: nodered
+    spec:
+      containers:
+      - name: nodered
+        image: nodered/node-red
+        args: ["--settings", "/nodered/config/settings.js", "--port", "1880", "--userDir", "/nodered/data"]
+        ports:
+        - containerPort: 1880
+        volumeMounts:
+        - name: conf-nodered
+          mountPath: "/nodered/config"
+          readOnly: true
+        - name: data-nodered
+          mountPath: /nodered/data
+      volumes:
+      - name: conf-nodered
+        configMap:
+          name: nodered
+      - name: data-nodered
+        persistentVolumeClaim:
+          claimName: pvc-nodered

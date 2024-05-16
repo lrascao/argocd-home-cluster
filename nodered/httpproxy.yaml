@@ -1,0 +1,14 @@
+apiVersion: projectcontour.io/v1
+kind: HTTPProxy
+metadata:
+  name: default
+  namespace: nodered
+spec:
+  virtualhost:
+    fqdn: nodered.88288338.xyz
+    tls:
+      secretName: certs-ingress
+  routes:
+    - services:
+        - name: nodered
+          port: 80
