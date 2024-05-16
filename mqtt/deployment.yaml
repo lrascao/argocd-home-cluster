@@ -24,9 +24,6 @@ spec:
          - name: certs-mqtt
            mountPath: "/mosquitto/certs"
            readOnly: true
-         - name: passwd-mqtt
-           mountPath: "/mosquitto/security"
-           readOnly: true
          - name: conf-mqtt
            mountPath: "/mosquitto/config"
            readOnly: true
@@ -34,9 +31,6 @@ spec:
       - name: certs-mqtt
         secret:
           secretName: certs-mqtt
-      - name: passwd-mqtt
-        secret:
-          secretName: passwd-mqtt
       - name: conf-mqtt
         configMap:
           name: mqtt
