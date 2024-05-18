@@ -13,7 +13,6 @@ spec:
   - secretName: certs-ingress
     hosts:
     - nodered.88288338.xyz
-    - alexa.nodered.88288338.xyz
   rules:
   - host: nodered.88288338.xyz
     http:

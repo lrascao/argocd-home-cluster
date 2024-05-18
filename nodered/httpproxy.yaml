@@ -18,18 +18,3 @@ spec:
       services:
       - name: nodered
         port: 80
----
-apiVersion: projectcontour.io/v1
-kind: HTTPProxy
-metadata:
-  name: alexa
-  namespace: nodered
-spec:
-  virtualhost:
-    fqdn: alexa.nodered.88288338.xyz
-    tls:
-      secretName: certs-ingress
-  routes:
-    - services:
-        - name: alexa-nodered
-          port: 80
