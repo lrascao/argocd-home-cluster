@@ -18,7 +18,7 @@ spec:
       containers:
       - name: nodered
         image: nodered/node-red
-        args: ["--settings", "/nodered/config/settings.js"]
+        args: ["--settings", "/nodered/config/settings.js", "--port", "1880", "--userDir", "/nodered/data"]
         ports:
         - containerPort: 1880
         volumeMounts:
@@ -26,7 +26,7 @@ spec:
           mountPath: "/nodered/config"
           readOnly: true
         - name: data-nodered
-          mountPath: "/nodered/data"
+          mountPath: /nodered/data
       volumes:
       - name: conf-nodered
         configMap:
