@@ -14,3 +14,22 @@ spec:
     targetPort: 1880
   selector:
     app: nodered
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: nodered
+  labels:
+    app: nodered
+  name: alexa-nodered
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    nodePort: 31080
+    port: 31080
+    protocol: TCP
+    targetPort: 31080
+  selector:
+    app: nodered
+
