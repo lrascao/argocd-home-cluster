@@ -1,0 +1,9 @@
+apiVersion: v2
+name: umbrella-chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+dependencies:
+- name: kube-plex
+  version: 0.2.7
+  repository: https://github.com/munnerz/kube-plex/tree/master/charts/kube-plex
