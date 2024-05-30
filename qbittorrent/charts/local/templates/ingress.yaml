@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   namespace: plex
-  name: plex
+  name: qbittorrent
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
     ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -10,17 +10,17 @@ metadata:
 spec:
   ingressClassName: contour
   tls:
-  - secretName: certs-plex-ingress
+  - secretName: certs-qbittorrent-ingress
     hosts:
-    - plex.88288338.xyz
+    - torrent.88288338.xyz
   rules:
-  - host: plex.88288338.xyz
+  - host: torrent.88288338.xyz
     http:
       paths:
       - pathType: Prefix
         path: /
         backend:
           service:
-            name: plex-kube-plex
+            name: qbittorrent
             port:
-              number: 32400
+              number: 8080
