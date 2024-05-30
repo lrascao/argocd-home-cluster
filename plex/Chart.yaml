@@ -5,5 +5,8 @@ version: 1.0.0
 appVersion: "1.0.0"
 dependencies:
 - name: kube-plex
-  version: 0.2.7
-  repository: https://github.com/munnerz/kube-plex/tree/master/charts/kube-plex
+  version: 0.2.13
+  repository: https://lrascao.github.io/kube-plex/
+- name: local
+  version: 0.0.1
+  repository: "file://charts/local"

@@ -1,0 +1,9 @@
+dependencies:
+- name: kube-plex
+  repository: https://lrascao.github.io/kube-plex/
+  version: 0.2.13
+- name: local
+  repository: file://charts/local
+  version: 0.0.1
+digest: sha256:a7a2f5bd282988100b5fa43f128510f8d9cb9c4b192d7a42a7e75b3d96192490
+generated: "2024-05-30T20:49:33.390365+01:00"
