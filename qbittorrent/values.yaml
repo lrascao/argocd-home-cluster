@@ -1,0 +1,10 @@
+# https://staging.artifacthub.io/packages/helm/k8s-at-home/qbittorrent/5.0.1
+persistence:
+  config:
+    enabled: true
+    existingClaim: pvc-qbittorrent-config 
+    mountPath: "/config" 
+
+  downloads:
+    enabled: true 
+    existingClaim: pvc-plex-data

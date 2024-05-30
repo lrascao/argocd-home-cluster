@@ -1,0 +1,9 @@
+dependencies:
+- name: qbittorrent
+  repository: https://k8s-at-home.com/charts/
+  version: 13.5.2
+- name: local
+  repository: file://charts/local
+  version: 0.0.1
+digest: sha256:28e543ef40a2ef494e88ee77381e8459585fca4be438a625d066bdbd83952b77
+generated: "2024-05-30T19:54:28.739353+01:00"
