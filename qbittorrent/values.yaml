@@ -9,3 +9,8 @@ qbittorrent:
     downloads:
       enabled: true 
       existingClaim: pvc-plex-data
+
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+
