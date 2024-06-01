@@ -4,9 +4,9 @@ metadata:
   name: pvc-plex-config
   namespace: plex
 spec:
+  storageClassName: local-storage
   accessModes:
   - ReadWriteMany
   resources:
     requests:
       storage: 5Gi
-  storageClassName: longhorn
