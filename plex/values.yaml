@@ -13,6 +13,7 @@ kube-plex:
 
   persistence:
     transcode:
+      enabled: true
       claimName: pvc-plex-transcode
     data:
       claimName: pvc-plex-data
