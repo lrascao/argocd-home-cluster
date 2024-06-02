@@ -19,3 +19,6 @@ kube-plex:
     config:
       claimName: pvc-plex-config
 
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
