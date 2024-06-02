@@ -18,8 +18,3 @@ kube-plex:
       claimName: pvc-plex-data
     config:
       claimName: pvc-plex-config
-
-  plex:
-    # The UID and GID that the Plex Media Server should run as.
-    uid: 1000
-    gid: 1000
