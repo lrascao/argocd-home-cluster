@@ -4,9 +4,10 @@ metadata:
   name: pvc-plex-transcode
   namespace: plex
 spec:
+  storageClassName: local-storage
   accessModes:
   - ReadWriteMany
   resources:
     requests:
-      storage: 20Gi
-  storageClassName: longhorn
+      storage: 5Gi
+
