@@ -5,7 +5,7 @@ version: 1.0.0
 appVersion: "1.0.0"
 dependencies:
 - name: kube-plex
-  version: 0.2.18
+  version: 0.2.19
   repository: https://lrascao.github.io/kube-plex/
 - name: local
   version: 0.0.1

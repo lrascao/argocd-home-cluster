@@ -1,9 +1,9 @@
 dependencies:
 - name: kube-plex
   repository: https://lrascao.github.io/kube-plex/
-  version: 0.2.18
+  version: 0.2.19
 - name: local
   repository: file://charts/local
   version: 0.0.1
-digest: sha256:221c5e166b70921c3a98275e7d8d1cec6092bc054e3068735beec0f0ea65c321
-generated: "2024-06-02T21:30:15.098312+01:00"
+digest: sha256:627009c1bcbc659b9067d4b81184d1ef816eb544f6e7960e478af94fc3b5305e
+generated: "2024-06-08T22:55:30.362047+01:00"
