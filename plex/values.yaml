@@ -23,3 +23,5 @@ kube-plex:
   resources:
     limits:
      cpu: 1
+    requests:
+     cpu: 100m
