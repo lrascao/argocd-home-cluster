@@ -19,3 +19,7 @@ kube-plex:
       claimName: pvc-plex-data
     config:
       claimName: pvc-plex-config
+
+  resources:
+    limits:
+     cpu: 1
