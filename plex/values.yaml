@@ -3,7 +3,7 @@ kube-plex:
     enabled: true
 
   # Override this with the plex claim token from plex.tv/claim
-  claimToken: "claim-Hn-V_EBHkYrtzWn2rmvQ"
+  claimToken: "claim-cCyUs2b-jJp-VVRRoq9y"
 
   # Set the timezone of the plex server
   timezone: Europe/Lisbon
