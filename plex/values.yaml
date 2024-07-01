@@ -25,3 +25,7 @@ kube-plex:
      cpu: 1
     requests:
      cpu: 100m
+
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    intel.feature.node.kubernetes.io/gpu: true
