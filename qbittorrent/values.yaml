@@ -15,5 +15,5 @@ qbittorrent:
     runAsGroup: 1000
 
   nodeSelector:
-    intel.feature.node.kubernetes.io/gpu: true
+    intel.feature.node.kubernetes.io/gpu: "true"
 
