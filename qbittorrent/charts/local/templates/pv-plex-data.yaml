@@ -11,7 +11,7 @@ spec:
   persistentVolumeReclaimPolicy: Delete
   storageClassName: local-storage
   local:
-    path: /var/local/plex/data/
+    path: /opt/plex/data/
   nodeAffinity:
     required:
       nodeSelectorTerms:

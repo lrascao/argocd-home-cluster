@@ -12,7 +12,7 @@ spec:
   persistentVolumeReclaimPolicy: Delete
   storageClassName: local-storage
   local:
-    path: /var/local/plex/transcode/
+    path: /opt/plex/transcode/
   nodeAffinity:
     required:
       nodeSelectorTerms:
