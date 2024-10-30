@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: updater
+  namespace: dnsproxy
+data:
+  entrypoint.sh: |-
+    #!/bin/sh
+    apk add --quiet --no-cache curl envsubst
+    PUBLIC_IP=$(curl --silent ifconfig.me/ip)
+    echo "Public IP: $PUBLIC_IP"
+    echo "AWS Elastic IP: $AWS_ELASTIC_IP"
+    PUBLIC_IP=$PUBLIC_IP envsubst < /etc/data.json > /tmp/data.json
+    curl -X POST --header "Authorization: $SECRET_TOKEN" --data-binary "@/tmp/data.json" http://$AWS_ELASTIC_IP:5353/
+  data.json: |-
+    [
+      {"name": "router1-node1", "addr": "$PUBLIC_IP:5311"},
+      {"name": "router1-node2", "addr": "$PUBLIC_IP:5312"},
+      {"name": "router1-node3", "addr": "$PUBLIC_IP:5313"},
+      {"name": "router1-node4", "addr": "$PUBLIC_IP:5314"},
+      {"name": "router2-node1", "addr": "$PUBLIC_IP:5321"},
+      {"name": "router2-node2", "addr": "$PUBLIC_IP:5322"},
+      {"name": "router2-node3", "addr": "$PUBLIC_IP:5323"},
+      {"name": "router2-node4", "addr": "$PUBLIC_IP:5324"}
+    ]

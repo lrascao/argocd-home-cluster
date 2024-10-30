@@ -1,0 +1,4 @@
+apiVersion: v1
+description: Local DNS proxy updater chart
+name: local
+version: 0.0.1

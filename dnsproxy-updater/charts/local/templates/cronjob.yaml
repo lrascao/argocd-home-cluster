@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: updater
+  namespace: dnsproxy
+spec:
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      name: updater
+    spec:
+      template:
+        spec:
+          containers:
+          - image: alpine:latest
+            name: updater
+            env:
+            - name: AWS_ELASTIC_IP
+              valueFrom:
+                secretKeyRef:
+                  name: dnsproxy-secrets
+                  key: aws-elastic-ip
+            - name: SECRET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dnsproxy-secrets
+                  key: secret-token
+            command:
+              - /bin/entrypoint.sh
+            volumeMounts:
+            - name: updater-volume
+              mountPath: /bin/entrypoint.sh
+              subPath: entrypoint.sh
+              readOnly: true
+            - name: updater-volume
+              mountPath: /etc/data.json
+              subPath: data.json
+              readOnly: true
+          restartPolicy: OnFailure
+          volumes:
+          - name: updater-volume
+            configMap:
+              defaultMode: 0777
+              name: updater
+              items:
+                - key: entrypoint.sh
+                  path: entrypoint.sh
+                - key: data.json
+                  path: data.json
+  schedule: '{{ .Values.updater.period }}'
