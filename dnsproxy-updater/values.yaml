@@ -1,2 +1,3 @@
-updater:
-  period: '*/2 * * * *'
+local:
+  updater:
+    period: '*/2 * * * *'
