@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: monitoring
+  labels:
+    app: influxdb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: influxdb 
+  template:
+    metadata:
+      labels:
+        app: influxdb
+    spec:
+      containers:
+      - env:
+        name: influxdb
+        image: influxdb:1.11.8-alpine
+        ports:
+        - name: api
+          containerPort: 8086 
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/influxdb/ 
+        - name: config
+          mountPath: /etc/influxdb/
+      volumes:
+      - name: config
+        configMap:
+          name: influxdb-cfg
+      - name: data
+        persistentVolumeClaim:
+          claimName: pvc-influxdb
