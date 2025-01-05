@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: daikin
+  namespace: climate-system
+  labels:
+    app: daikin
+spec:
+  clusterIP: None
+  ports:
+  - name: daikin
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: climate-controller
+

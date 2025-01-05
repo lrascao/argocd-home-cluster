@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config
+  namespace: climate-system
+data:
+  main.py: |-
+    print("Hello, world!")

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: climate-controller
+  labels:
+    app: climate-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: climate-controller
+  template:
+    metadata:
+      labels:
+        app: climate-controller
+    spec:
+      containers:
+      - image: registry.88288338.xyz:5000/climate-controller:latest
+        name: controller
+        ports:
+        - name: liveness-port
+          containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: liveness-port
+        env:
+        - name: DAIKIN_CLIENT_ID
+          value: {{ .Values.daikin.client_id }}
+        - name: DAIKIN_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: daikin-credentials
+              key: client_secret
+        - name: DATA_DIR
+          value: /data
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pvc-climate-controller
+
+
+
