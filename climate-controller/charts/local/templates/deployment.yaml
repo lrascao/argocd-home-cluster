@@ -11,6 +11,10 @@ spec:
       app: climate-controller
   template:
     metadata:
+      annotations:
+        prometheus.io/path: /metrics
+        prometheus.io/port: metrics
+        prometheus.io/scrape: "true"
       labels:
         app: climate-controller
     spec:
@@ -34,6 +38,8 @@ spec:
               key: client_secret
         - name: DATA_DIR
           value: /data
+        - name: PORT
+          value: "8080"
         volumeMounts:
         - name: data
           mountPath: /data
