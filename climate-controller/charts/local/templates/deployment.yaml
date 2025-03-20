@@ -36,6 +36,8 @@ spec:
             secretKeyRef:
               name: daikin-credentials
               key: client_secret
+        - name: DAIKIN_GATEWAY_DEVICE_ID
+          value: {{ .Values.daikin.gateway_device_id }}
         - name: DATA_DIR
           value: /data
         - name: PORT
