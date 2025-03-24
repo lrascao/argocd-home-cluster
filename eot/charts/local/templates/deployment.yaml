@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eot
+  labels:
+    app: eot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eot
+  template:
+    metadata:
+      annotations:
+        prometheus.io/path: /metrics
+        prometheus.io/port: metrics
+        prometheus.io/scrape: "true"
+      labels:
+        app: eot
+    spec:
+      containers:
+      - image: registry.88288338.xyz:5000/eot:latest
+        name: eot
+        ports:
+        - name: liveness-port
+          containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: liveness-port
+
+
+

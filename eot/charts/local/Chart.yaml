@@ -1,0 +1,4 @@
+apiVersion: v1
+description: EOT proxy
+name: local
+version: 0.0.1

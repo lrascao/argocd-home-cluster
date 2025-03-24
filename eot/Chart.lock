@@ -1,0 +1,6 @@
+dependencies:
+- name: local
+  repository: file://charts/local
+  version: 0.0.1
+digest: sha256:e0dfcce03905144ac26eed0edd615ffb5a125b7761af60d30abf7456e14d4902
+generated: "2024-10-30T15:25:04.078427Z"

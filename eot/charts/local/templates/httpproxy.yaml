@@ -1,0 +1,13 @@
+apiVersion: projectcontour.io/v1
+kind: HTTPProxy
+metadata:
+  name: eot
+spec:
+  virtualhost:
+    fqdn: api.eot.pt
+    tls:
+      secretName: certs-eot-ingress
+  routes:
+    - services:
+        - name: eot
+          port: 8080
