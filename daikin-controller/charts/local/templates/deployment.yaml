@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: climate-controller
+  name: daikin-controller
   labels:
-    app: climate-controller
+    app: daikin-controller
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: climate-controller
+      app: daikin-controller
   template:
     metadata:
       annotations:
@@ -16,10 +16,10 @@ spec:
         prometheus.io/port: metrics
         prometheus.io/scrape: "true"
       labels:
-        app: climate-controller
+        app: daikin-controller
     spec:
       containers:
-      - image: registry.88288338.xyz:5000/climate-controller:latest
+      - image: registry.88288338.xyz:5000/daikin-controller:latest
         name: controller
         ports:
         - name: liveness-port
@@ -48,7 +48,7 @@ spec:
       volumes:
       - name: data
         persistentVolumeClaim:
-          claimName: pvc-climate-controller
+          claimName: pvc-daikin-controller
 
 
 
