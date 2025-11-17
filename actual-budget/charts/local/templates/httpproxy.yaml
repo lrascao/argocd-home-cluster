@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: actual-budget
+  name: actual-budget
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    ingress.kubernetes.io/force-ssl-redirect: "true"
+    kubernetes.io/tls-acme: "true"
+spec:
+  ingressClassName: contour
+  tls:
+  - secretName: certs-actual-budget
+    hosts:
+    - actual.88288338.xyz
+  rules:
+  - host: actual.88288338.xyz
+    http:
+      paths:
+      - pathType: Prefix
+        path: /
+        backend:
+          service:
+            name: actual-budget
+            port:
+              number: 8080
+

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actual-budget-config
+  namespace: actual-budget
+data:
+  config.json: |
+    {
+      "port": 8080
+    }

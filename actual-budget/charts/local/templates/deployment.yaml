@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actual-budget
+  labels:
+    app: actual-budget
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: actual-budget
+  template:
+    metadata:
+      annotations:
+        prometheus.io/path: /metrics
+        prometheus.io/port: metrics
+        prometheus.io/scrape: "true"
+      labels:
+        app: actual-budget
+    spec:
+      containers:
+      - image: ghcr.io/actualbudget/actual:latest
+        name: actual-budget
+        ports:
+        - name: liveness-port
+          containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /
+            port: liveness-port
+            scheme: HTTP
+        env:
+        - name: ACTUAL_CONFIG_PATH
+          value: "/config/config.json"
+        - name: ACTUAL_DATA_DIR
+          value: /data
+        - name: DEBUG
+          value: "actual:config,actual-sensitive:config"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /config
+        - name: tls
+          mountPath: /certs
+          readOnly: true
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pvc-actual-budget
+      - name: config
+        configMap:
+          name: actual-budget-config
+      - name: tls
+        secret:
+          secretName: certs-actual-budget
+
+
+
