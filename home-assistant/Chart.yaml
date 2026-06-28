@@ -1,0 +1,12 @@
+apiVersion: v2
+name: umbrella-chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+dependencies:
+- name: home-assistant
+  version: 0.3.67
+  repository: http://pajikos.github.io/home-assistant-helm-chart/
+- name: local
+  version: 0.0.1
+  repository: "file://charts/local"

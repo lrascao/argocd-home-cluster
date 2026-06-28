@@ -1,0 +1,23 @@
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 100Mi
+  storageClass: ""
+
+ingress:
+  enabled: true
+  className: contour
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    ingress.kubernetes.io/force-ssl-redirect: "true"
+    kubernetes.io/tls-acme: "true"
+  tls:
+    - secretName: certs-ingress
+      hosts:
+        - home-assistant.88288338.xyz
+
+configuration:
+  enabled: true
+  forceInit: true
+  trusted_proxies:
+    - 10.0.0.0/8

@@ -1,0 +1,21 @@
+apiVersion: projectcontour.io/v1
+kind: HTTPProxy
+metadata:
+  name: default
+  namespace: home-assistant
+spec:
+  virtualhost:
+    fqdn: home-assistant.88288338.xyz
+    tls:
+      secretName: certs-ingress
+  routes:
+    - services:
+        - name: home-assistant
+          port: 8080
+    - conditions:
+      - prefix: /api/websocket
+      enableWebsockets: true # Setting this to true enables websocket for all paths that match /websocket
+      services:
+      - name: home-assistant
+        port: 8080
+
