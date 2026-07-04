@@ -5,7 +5,7 @@ metadata:
   namespace: plex
 spec:
   capacity:
-    storage: 5Gi
+    storage: 100Mi
   volumeMode: Filesystem
   accessModes:
   - ReadWriteMany
