@@ -1,7 +1,7 @@
 persistence:
   enabled: true
   accessMode: ReadWriteOnce
-  size: 100Mi
+  size: 2Gi
   storageClass: ""
 
 ingress:
