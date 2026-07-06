@@ -19,6 +19,9 @@ spec:
       - name: nodered
         image: nodered/node-red
         args: ["--settings", "/nodered/config/settings.js", "--port", "1880", "--userDir", "/nodered/data"]
+        env:
+        - name: NODE_RED_DBUS_ADDRESS
+          value: 192.168.3.54:78 # cerbogx.home but need ip address
         ports:
         - containerPort: 1880
         volumeMounts:
