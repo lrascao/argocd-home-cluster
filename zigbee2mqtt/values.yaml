@@ -6,6 +6,12 @@ zigbee2mqtt:
     serial:
       adapter: deconz
 
+  service:
+    # -- no load balancer implementation in the cluster, a LoadBalancer
+    # -- service would keep the argocd app health in Progressing forever,
+    # -- the frontend is not accessed from outside the cluster anyway
+    type: ClusterIP
+
   statefulset:
     storage:
       enabled: true
