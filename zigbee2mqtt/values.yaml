@@ -1,0 +1,16 @@
+zigbee2mqtt:
+  zigbee2mqtt:
+    mqtt:
+      # -- Required: MQTT server URL (use mqtts:// for SSL/TLS connection)
+      server: "mqtt://mqttgateway.home:1883"
+    serial:
+      adapter: deconz
+
+  statefulset:
+    storage:
+      enabled: true
+      size: 100Mi
+      # -- the name for the storage class to be used in the persistent volume claim
+      storageClassName: longhorn
+    nodeSelector:
+      kubernetes.io/hostname: "node3"
