@@ -12,6 +12,11 @@ home-assistant:
       cert-manager.io/cluster-issuer: letsencrypt
       ingress.kubernetes.io/force-ssl-redirect: "true"
       kubernetes.io/tls-acme: "true"
+    hosts:
+      - host: home-assistant.88288338.xyz
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
     tls:
       - secretName: certs-ingress
         hosts:
