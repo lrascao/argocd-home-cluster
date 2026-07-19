@@ -16,11 +16,11 @@ spec:
           - image: alpine:latest
             name: updater
             env:
-            - name: AWS_ELASTIC_IP
+            - name: DNSPROXY_IP
               valueFrom:
                 secretKeyRef:
                   name: dnsproxy-secrets
-                  key: aws-elastic-ip
+                  key: dnsproxy-ip
             - name: SECRET_TOKEN
               valueFrom:
                 secretKeyRef:

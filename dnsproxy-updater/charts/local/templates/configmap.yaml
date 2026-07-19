@@ -9,9 +9,9 @@ data:
     apk add --quiet --no-cache curl envsubst
     PUBLIC_IP=$(curl --silent ifconfig.me/ip)
     echo "Public IP: $PUBLIC_IP"
-    echo "AWS Elastic IP: $AWS_ELASTIC_IP"
+    echo "DNS proxy IP: $DNSPROXY_IP"
     PUBLIC_IP=$PUBLIC_IP envsubst < /etc/data.json > /tmp/data.json
-    curl -X POST --header "Authorization: $SECRET_TOKEN" --data-binary "@/tmp/data.json" http://$AWS_ELASTIC_IP:5353/
+    curl -X POST --header "Authorization: $SECRET_TOKEN" --data-binary "@/tmp/data.json" http://$DNSPROXY_IP:5353/
   data.json: |-
     [
       {"name": "router1-node1", "addr": "$PUBLIC_IP:5311"},
@@ -21,5 +21,9 @@ data:
       {"name": "router2-node1", "addr": "$PUBLIC_IP:5321"},
       {"name": "router2-node2", "addr": "$PUBLIC_IP:5322"},
       {"name": "router2-node3", "addr": "$PUBLIC_IP:5323"},
-      {"name": "router2-node4", "addr": "$PUBLIC_IP:5324"}
+      {"name": "router2-node4", "addr": "$PUBLIC_IP:5324"},
+      {"name": "router3-node1", "addr": "$PUBLIC_IP:5331"},
+      {"name": "router3-node2", "addr": "$PUBLIC_IP:5332"},
+      {"name": "router3-node3", "addr": "$PUBLIC_IP:5333"},
+      {"name": "router3-node4", "addr": "$PUBLIC_IP:5334"}
     ]
