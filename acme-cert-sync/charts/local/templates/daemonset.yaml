@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: acme-cert-sync
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: acme-cert-sync
+  template:
+    metadata:
+      labels:
+        app: acme-cert-sync
+    spec:
+      serviceAccountName: acme-cert-sync
+      # Runs on every node because the election decides which one holds the
+      # certificate, and that can move at any time.
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: sync
+        image: {{ .Values.sync.image }}
+        command:
+          - /bin/entrypoint.sh
+        env:
+        - name: CERT_DIR
+          value: /certs
+        - name: CERT_NAME
+          value: {{ .Values.sync.certName | quote }}
+        - name: SECRET_NAME
+          value: {{ .Values.sync.secretName | quote }}
+        - name: NAMESPACE
+          value: {{ .Values.namespace | quote }}
+        - name: PERIOD
+          value: {{ .Values.sync.period | quote }}
+        securityContext:
+          # The exported key is mode 0600 owned by root, which is the whole
+          # reason this cannot drop to an unprivileged user.
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 64Mi
+        volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
+        - name: entrypoint
+          mountPath: /bin/entrypoint.sh
+          subPath: entrypoint.sh
+          readOnly: true
+      volumes:
+      - name: certs
+        hostPath:
+          path: {{ .Values.sync.hostPath }}
+          # A node that has never won the election has no export directory. An
+          # empty one is created rather than leaving the pod unschedulable.
+          type: DirectoryOrCreate
+      - name: entrypoint
+        configMap:
+          defaultMode: 0777
+          name: acme-cert-sync
+          items:
+          - key: entrypoint.sh
+            path: entrypoint.sh

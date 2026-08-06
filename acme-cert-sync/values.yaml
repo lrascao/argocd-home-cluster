@@ -1,0 +1,23 @@
+local:
+  namespace: acme
+
+  sync:
+    # Directory the coredns acme plugin exports to, on the node itself. Only
+    # the instance that currently holds the election has anything in it, so
+    # every other pod in the daemonset idles.
+    hostPath: /etc/coredns/acme
+    # Subdirectory holding the certificate to publish. The plugin writes one
+    # per issued name, and "*" is sanitised to "wildcard_".
+    certName: wildcard_.88288338.xyz
+    # Secret the certificate is published to, in this chart's namespace.
+    secretName: wildcard-88288338-xyz
+    # How often to look, in seconds. The certificate changes every 60 days;
+    # this is really about noticing the election moving to another node.
+    period: 60
+    image: alpine:latest
+
+  delegation:
+    # Namespaces allowed to reference the secret from an HTTPProxy. "*" is
+    # every namespace; replace with an explicit list to narrow it.
+    targetNamespaces:
+      - "*"

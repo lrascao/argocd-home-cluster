@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acme-cert-sync
+  namespace: {{ .Values.namespace }}
+data:
+  entrypoint.sh: |-
+    #!/bin/sh
+    set -eu
+
+    apk add --quiet --no-cache kubectl
+
+    CERT="${CERT_DIR}/${CERT_NAME}/tls.crt"
+    KEY="${CERT_DIR}/${CERT_NAME}/tls.key"
+
+    echo "watching ${CERT} for ${NAMESPACE}/${SECRET_NAME}"
+
+    # Only used to decide whether to log; the apply runs every cycle regardless
+    # so that a secret deleted out from under us is put back without waiting
+    # for the certificate to change.
+    published=""
+
+    while true; do
+      if [ -r "${CERT}" ] && [ -r "${KEY}" ]; then
+        current=$(cat "${CERT}" "${KEY}" | sha256sum | cut -d' ' -f1)
+
+        if kubectl create secret tls "${SECRET_NAME}" \
+             --cert="${CERT}" --key="${KEY}" \
+             --namespace "${NAMESPACE}" \
+             --dry-run=client -o yaml | kubectl apply -f - >/dev/null; then
+          if [ "${current}" != "${published}" ]; then
+            echo "published ${CERT_NAME} to ${NAMESPACE}/${SECRET_NAME} (${current})"
+            published="${current}"
+          fi
+        else
+          echo "failed to publish ${NAMESPACE}/${SECRET_NAME}, retrying in ${PERIOD}s" >&2
+          published=""
+        fi
+      elif [ -n "${published}" ]; then
+        # The election moved away, so this node stopped being the one with a
+        # certificate. Whoever won it publishes from here on.
+        echo "${CERT} is gone, this node no longer holds the election"
+        published=""
+      fi
+
+      sleep "${PERIOD}"
+    done

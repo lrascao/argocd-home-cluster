@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    # The daemonset mounts a host path, which the baseline and restricted
+    # profiles both reject. Only has any effect where pod security admission
+    # is actually enforced.
+    pod-security.kubernetes.io/enforce: privileged
