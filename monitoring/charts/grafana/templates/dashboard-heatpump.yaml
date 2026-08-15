@@ -1,0 +1,142 @@
+# Altherma 3 heat pump.
+#
+# Was built in the UI and lived only in the PVC; this is that dashboard put
+# into git, with the UI's bookkeeping stripped. Same uid as the original, so
+# existing links keep working and provisioning adopts it in place rather than
+# leaving a second copy behind. It moves into the Provisioned folder and
+# becomes read-only there -- edits belong in this file now.
+#
+# Cleaned, beyond mechanical de-cruft:
+#   - the datasource is a template variable, not the hardcoded uid it carried
+#     in seven places. That uid is specific to one Grafana's database, so the
+#     original could not survive a datasource being rebuilt.
+#   - legends were "__auto", which renders as the literal query text
+#     (avg(tank_water_temperature)). Named instead, and the colour overrides
+#     that matched on the old rendered text were updated to match.
+#   - a stray hideSeriesFrom override on the leaving-water panel, left behind
+#     by a click on the legend, is gone. It was inert with one series and
+#     would have hidden the second one added.
+#   - setpoints are dashed, so desired reads as distinct from actual at a
+#     glance, which is the entire question these panels answer.
+#   - units are celsius. They were unset, so Grafana drew bare numbers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-heatpump
+  namespace: monitoring
+data:
+  heatpump.json: |
+    {
+      "title": "Altherma 3 Heat Pump",
+      "uid": "cegekb2y920hsf",
+      "timezone": "browser",
+      "schemaVersion": 40,
+      "refresh": "1m",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "ds",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {},
+            "hide": 0,
+            "label": "Datasource"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Tank temperature",
+          "description": "Domestic hot water tank, actual against setpoint. The gap between them is the reheat the pump is about to do.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "celsius",
+              "color": { "mode": "palette-classic" },
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "target" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            { "refId": "A", "expr": "avg(tank_water_temperature)", "legendFormat": "actual" },
+            { "refId": "B", "expr": "avg(desired_tank_water_temperature)", "legendFormat": "target" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Leaving water temperature",
+          "description": "Flow temperature out to the emitters. Lower for the same room temperature means a better COP, so this is the number to watch when tuning the weather curve.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "celsius",
+              "color": { "mode": "palette-classic" },
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "leaving water" },
+                "properties": [
+                  { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            { "refId": "A", "expr": "avg(leaving_water_temperature)", "legendFormat": "leaving water" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Outside / inside temperatures",
+          "description": "Outdoor against room and its setpoint. Room tracking below target while outdoor falls is the signal that the weather curve is under-shooting.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "celsius",
+              "color": { "mode": "palette-classic" },
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "outdoor" },
+                "properties": [
+                  { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "room" },
+                "properties": [
+                  { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "room target" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            { "refId": "A", "expr": "avg(outdoor_temperature)", "legendFormat": "outdoor" },
+            { "refId": "B", "expr": "avg(room_temperature)", "legendFormat": "room" },
+            { "refId": "C", "expr": "avg(desired_room_temperature)", "legendFormat": "room target" }
+          ]
+        }
+      ]
+    }

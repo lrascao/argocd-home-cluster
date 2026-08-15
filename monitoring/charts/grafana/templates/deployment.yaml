@@ -41,6 +41,15 @@ spec:
       - name: dashboards-provider
         configMap:
           name: grafana-dashboards-provider
+      # projected rather than a plain configMap, because a configMap volume
+      # takes exactly one ConfigMap and the second dashboard had nowhere to
+      # go. Projecting merges them into one directory, so dashboard N+1 is a
+      # new ConfigMap plus one line here rather than another volume and
+      # another mountPath.
       - name: dashboards
-        configMap:
-          name: grafana-dashboard-vllm
+        projected:
+          sources:
+          - configMap:
+              name: grafana-dashboard-vllm
+          - configMap:
+              name: grafana-dashboard-heatpump
