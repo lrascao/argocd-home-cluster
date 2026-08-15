@@ -138,6 +138,17 @@ spec:
             # change of base image cannot quietly change the arithmetic.
             - --dtype
             - bfloat16
+            # On by default in the V1 engine, and stated anyway because this is
+            # the single load-bearing latency setting on a CPU backend rather
+            # than an optimisation. Prefill runs at ~148 tok/s here, so whether
+            # a prompt's prefix is already in the KV cache is the difference
+            # between a reply that arrives and one that times out -- B-1
+            # measured 199 s cold against 4.4 s warm on the same 28.7k prompt.
+            #
+            # Written down so a base image that flips the default, or someone
+            # reaching for --no-enable-prefix-caching, is a visible diff rather
+            # than an unexplained tenfold regression in the latency budget.
+            - --enable-prefix-caching
             {{- if .Values.vllm.model.tool.calling }}
             # Gated: this pair is what arms the crash documented in
             # values.yaml. Enabling it on the CPU backend turns any emitted

@@ -4,34 +4,49 @@ local:
     # CUDA one -- vllm/vllm-openai is GPU-only and will not start here.
     image: vllm/vllm-openai-cpu:v0.27.1-x86_64
 
-    # Qwen3-4B, not the 8B the benchmark numbers are quoted for.
+    # Qwen3-1.7B, stepped back DOWN from the 4B, and the reason is latency
+    # rather than anything about the model's answers.
     #
-    # Those numbers come from llama.cpp at Q4_K_M, where an 8B is 4.68 GiB.
-    # vLLM's CPU backend has no such quantisation path -- BF16 is its default
-    # and what AVX-512 accelerates -- so the same 8B here is ~16 GB of weights,
-    # not 4.68, and does not fit. The model that fits is decided by the
-    # serving runtime's dtype, not by the GGUF size.
+    # B-1 measured both on this hardware. Generation is what a person waiting
+    # for a spoken reply experiences, and it does not scale with parameters
+    # the way the byte arithmetic predicts:
+    #
+    #                  generation   40-token reply   verdict
+    #   Qwen3-1.7B      29 tok/s        ~1.4 s       conversational
+    #   Qwen3-4B         9.0 tok/s      ~4.4 s       too slow to talk to
+    #
+    # 2.4x the weights cost 3.2x the time, not 2.4x -- the 4B's 36 layers
+    # against the 1.7B's 28 add per-layer overhead the CPU path does not
+    # amortise, so it reaches only ~72 GB/s effective against the 1.7B's ~99.
+    # The 4B is the better model and the wrong one for a voice assistant;
+    # 4.4 s of silence after a question reads as broken, not as thoughtful.
+    #
+    # If this node is ever replaced by a GPU one, revisit: the ranking is a
+    # property of CPU generation speed, not of the models.
+    #
+    # Those benchmark numbers elsewhere in the doc come from llama.cpp at
+    # Q4_K_M, where an 8B is 4.68 GiB. vLLM's CPU backend has no such
+    # quantisation path -- BF16 is its default and what AVX-512 accelerates --
+    # so the same 8B here is ~16 GB of weights, not 4.68, and does not fit.
+    # The model that fits is decided by the serving runtime's dtype, not by
+    # the GGUF size.
     #
     # Weights, maxLen and kvCacheSpaceGiB are one budget against 23.3 GiB of
     # allocatable node. What the two candidates cost:
     #
     #                     weights   KV/token   40960-ctx KV   total @8GiB KV
-    #   Qwen3-1.7B         3.4 GB    112 KiB       4.4 GiB        ~14 GiB
-    #   Qwen3-4B (here)    8.0 GB    144 KiB       5.6 GiB        ~18 GiB
+    #   Qwen3-1.7B (here)  3.4 GB    112 KiB       4.4 GiB        ~14 GiB
+    #   Qwen3-4B           8.0 GB    144 KiB       5.6 GiB        ~18 GiB
     #
-    # (4B: 36 layers x 8 kv-heads x 128 head-dim, from its own config.json;
-    # same 40960 max_position_embeddings, so maxLen did not change moving up.)
-    #
-    # ~18 GiB is the memory limit exactly, with nothing spare, so moving up
-    # needed one of the two to give: either the limit to ~21Gi or the KV cache
-    # to 6 GiB. The KV gave -- see kvCacheSpaceGiB below. Raising both does not
-    # fit; the node has 23.3 GiB and the kubelet and flannel live there too.
+    # (1.7B: 28 layers x 8 kv-heads x 128 head-dim, from its own config.json;
+    # same 40960 max_position_embeddings, so maxLen did not change coming
+    # back down.)
     #
     # Do not lower maxLen to make room. That is the knob that failed first
     # here and it fails as a 500 per request, not as an OOM.
     model:
-      name: Qwen/Qwen3-4B
-      servedName: qwen3-4b
+      name: Qwen/Qwen3-1.7B
+      servedName: qwen3-1.7b
       # 40960 -- the model's own max_position_embeddings, so this is the
       # ceiling rather than a choice.
       #
@@ -119,20 +134,23 @@ local:
     # the memory budget above. This model's KV cost is fixed and computable
     # from its config:
     #
-    #   2 (K,V) x 36 layers x 8 kv-heads x 128 head-dim x 2 B (bf16)
-    #     = 147,456 B = 144 KiB per token
+    #   2 (K,V) x 28 layers x 8 kv-heads x 128 head-dim x 2 B (bf16)
+    #     = 114,688 B = 112 KiB per token
     #
-    # so one full 40,960-token sequence needs 5.6 GiB of KV on its own.
+    # so one full 40,960-token sequence needs 4.4 GiB of KV on its own.
     #
-    # 6 GiB holds 43,690 tokens: one maximum-length request with a little
-    # room, and 2 GiB back against the 18Gi limit. The alternative was 8 GiB
-    # and a 21Gi limit, which fits on paper and leaves the node's last ~2 GiB
-    # to be shared between the kubelet and flannel. Cheaper to give up
-    # batching headroom this lab will not use than to bet the node on it.
+    # 8 GiB holds 74,898 tokens. That is far more context than voice will ever
+    # use in one request, and buying it is still the right call, because on
+    # this backend the KV cache is ALSO the prefix cache. Blocks are evicted
+    # LRU, so cache size is directly how many turns of an unchanged system
+    # prompt survive between one conversation and the next -- and B-1 measured
+    # a warm prefix at 45x a cold one. Room here is bought in prefill seconds,
+    # not in batching headroom.
     #
-    # It was 2 GiB when the model was smaller and maxLen was 8192; raising
-    # maxLen to 40960 is what forced it up, since the two are one decision.
-    kvCacheSpaceGiB: 6
+    # It was 6 GiB under the 4B, whose 36 layers cost 144 KiB per token
+    # against this model's 112. Dropping to the 1.7B gave back 4.6 GB of
+    # weights, which is where the extra 2 GiB of cache comes from.
+    kvCacheSpaceGiB: 8
 
     # Six of eight cores, leaving two for the kubelet and flannel. B-0's sweep
     # is why this costs almost nothing: generation at 4 threads was already
@@ -150,15 +168,20 @@ local:
       # token generator shows up directly as latency. The request is what
       # reserves the cores; the limit would only add jitter.
       #
-      # 18Gi. The budget on a 23.3 GiB node: ~7.45 GiB weights + 6 GiB KV +
+      # 16Gi. The budget on a 23.3 GiB node: ~3.2 GiB weights + 8 GiB KV +
       # ~3 GB of vLLM runtime and activations, leaving ~1.8 GiB spare here and
-      # ~5 GiB on the node for the kubelet and flannel.
+      # ~7 GiB on the node for the kubelet and flannel.
+      #
+      # It was 18Gi under the 4B. The 1.7B gives back 4.3 GiB of weights and
+      # 2 GiB of that went straight back into the KV cache, so the limit only
+      # falls by 2 -- deliberately, because a bigger prefix cache is the one
+      # purchase that shortens a spoken reply on this backend.
       #
       # VLLM_CPU_KVCACHE_SPACE is added on top of the weights by the CPU
       # backend rather than carved out of a total, so this limit has to cover
       # both or the pod is OOMKilled the moment the cache fills -- which is a
       # failure at steady state under load, not at startup.
-      memory: 18Gi
+      memory: 16Gi
       ephemeral-storage: 20Gi
 
   # Where this is allowed to run. Both halves are required and they do
