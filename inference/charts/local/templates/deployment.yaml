@@ -1,0 +1,224 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: inference
+  labels:
+    app: vllm
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. The default would try to stand a second pod
+  # up beside the first, and two of these do not fit on one node -- the new
+  # pod sits Pending on memory until the old one goes, which it never does.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+      annotations:
+        # This Prometheus scrapes pods by annotation only -- there is no
+        # ServiceMonitor CRD and no static target for it. Without these three
+        # the /metrics endpoint below is served and never read.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      enableServiceLinks: false
+      # Both halves matter. The toleration is permission to land on the
+      # tainted cloud node; the nodeSelector is the restriction that keeps it
+      # off node1-4. A toleration alone does not pin anything -- it only
+      # removes an objection -- so dropping the nodeSelector would make every
+      # bare-metal node a legal target, and those run etcd.
+      tolerations:
+        - key: {{ .Values.placement.tolerationKey }}
+          operator: Equal
+          value: {{ .Values.placement.tolerationValue }}
+          effect: NoSchedule
+      nodeSelector:
+        {{ .Values.placement.nodeSelectorKey }}: {{ .Values.placement.nodeSelectorValue }}
+
+      initContainers:
+        # The weights problem, in the open. There is no Longhorn on the cloud
+        # node -- the taint keeps it off and the composition deliberately
+        # composes no storage beyond the boot disk -- so there is no PVC to
+        # mount and the weights have to come from somewhere on every start.
+        #
+        # This pulls them at datacenter speed into an emptyDir. The cost is
+        # honest and worth stating: a pod restart re-downloads ~3.4 GB, and a
+        # HuggingFace outage is a failed start. Baking them into an image
+        # instead trades that for a registry the node can reach quickly, which
+        # this cluster does not have -- its registry is home-side and
+        # split-horizon DNS answers cloud nodes with unroutable LAN addresses.
+        #
+        # Same image as the server, so this costs no extra pull: the vLLM
+        # image already carries huggingface_hub.
+        - name: fetch-weights
+          image: {{ .Values.vllm.image }}
+          command: ["python3", "-c"]
+          args:
+            - |
+              import os
+              from huggingface_hub import snapshot_download
+              d = snapshot_download(
+                  repo_id=os.environ["MODEL_ID"],
+                  local_dir=os.environ["MODEL_DIR"],
+                  # Weights, config and tokenizer only. The default would also
+                  # drag the .bin duplicates of the safetensors down, which is
+                  # the same model twice.
+                  allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model"],
+                  # 2, not the default 8. Each worker streams a shard to disk,
+                  # and the dirty pages they produce are charged to this
+                  # container's cgroup until writeback catches up -- see the
+                  # memory limit below.
+                  max_workers=2,
+              )
+              print("weights at", d, flush=True)
+          env:
+            - name: MODEL_ID
+              value: {{ .Values.vllm.model.name | quote }}
+            - name: MODEL_DIR
+              value: /models/{{ .Values.vllm.model.servedName }}
+            # optional, because the model is public and the download works
+            # without it -- the token only lifts HuggingFace's anonymous rate
+            # limit. Left required, a missing or not-yet-unsealed secret would
+            # block startup entirely, and this is the one container that runs
+            # again on every single restart. That trades a real failure mode
+            # for a nice-to-have.
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: HF_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          # 6Gi to download a 3.4 GB model, which looks absurd until you know
+          # why: writing a file into an emptyDir generates page cache, and the
+          # kernel charges that page cache to the cgroup that dirtied it. The
+          # pages are reclaimable, but four parallel writers dirtied them
+          # faster than writeback could retire them and the container was
+          # OOMKilled at 2Gi with the download 89% done.
+          #
+          # The fix is both halves: fewer writers above, and enough headroom
+          # here that reclaim never has to win a race.
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              memory: 6Gi
+
+      containers:
+        - name: vllm
+          image: {{ .Values.vllm.image }}
+          args:
+            - --model
+            - /models/{{ .Values.vllm.model.servedName }}
+            # What the OpenAI API calls itself. Without this the model id
+            # clients must send is the filesystem path above, which leaks a
+            # container detail into every caller.
+            - --served-model-name
+            - {{ .Values.vllm.model.servedName }}
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8000"
+            - --max-model-len
+            - {{ .Values.vllm.model.maxLen | quote }}
+            # BF16 is the CPU backend's native dtype on AVX-512 and what
+            # avx512_vnni accelerates. Stated rather than defaulted so a
+            # change of base image cannot quietly change the arithmetic.
+            - --dtype
+            - bfloat16
+            {{- if .Values.vllm.model.tool.calling }}
+            # Gated: this pair is what arms the crash documented in
+            # values.yaml. Enabling it on the CPU backend turns any emitted
+            # tool call into an engine death and a pod restart, so the gate
+            # stays shut until vllm#51283 closes.
+            - --enable-auto-tool-choice
+            - --tool-call-parser={{ .Values.vllm.model.tool.parser }}
+            {{- end }}
+          env:
+            # GiB of KV cache, and the single most important number here.
+            # vLLM defaults it to 4 GiB when unset, and the CPU backend adds
+            # this to the weight size rather than carving it out of a budget
+            # -- so an unset value is an invisible 4 GiB on top of everything
+            # the limits below account for.
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: {{ .Values.vllm.kvCacheSpaceGiB | quote }}
+            - name: OMP_NUM_THREADS
+              value: {{ .Values.vllm.threads | quote }}
+            - name: VLLM_LOGGING_LEVEL
+              value: INFO
+          ports:
+            - name: http
+              containerPort: 8000
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - mountPath: /dev/shm
+              name: dshm
+
+          # The classic first bug in this workload, handled by startupProbe
+          # rather than by inflating the other two.
+          #
+          # Loading a model takes minutes. A readinessProbe alone would only
+          # keep it out of the Service, which is harmless -- but a
+          # livenessProbe firing during that load kills the container, and the
+          # restart loads from scratch and gets killed again. The pod never
+          # starts and the logs show only a truncated load.
+          #
+          # Kubernetes does not run readiness or liveness at all until the
+          # startupProbe has succeeded once, so this single probe is what
+          # buys the load its time, and the other two can then be tight
+          # enough to be useful.
+          #
+          # 90 x 10s = 15 minutes. Far more than a 1.7B needs; sized so that
+          # stepping the model up in values.yaml does not silently reintroduce
+          # the bug this exists to prevent.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 90
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 10
+
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+
+      volumes:
+        # Disk-backed, NOT medium: Memory. An emptyDir with medium: Memory is
+        # a tmpfs and counts against the container's memory limit, so the
+        # weights would be paid for twice -- once as files and again as
+        # resident memory -- and the pod would OOM at a size the arithmetic
+        # says fits.
+        - name: models
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 10Gi # Adjust size based on GPU count and tensor parallelism

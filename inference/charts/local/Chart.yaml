@@ -1,0 +1,4 @@
+apiVersion: v1
+description: LLM inference (vLLM CPU backend) for the cloud node
+name: local
+version: 0.0.1

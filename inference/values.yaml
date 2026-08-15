@@ -1,0 +1,164 @@
+local:
+  vllm:
+    # Pinned, not :latest. vLLM's CPU backend is a separate image from the
+    # CUDA one -- vllm/vllm-openai is GPU-only and will not start here.
+    image: vllm/vllm-openai-cpu:v0.27.1-x86_64
+
+    # Qwen3-1.7B, not the 8B the benchmark numbers are quoted for.
+    #
+    # Those numbers come from llama.cpp at Q4_K_M, where an 8B is 4.68 GiB.
+    # vLLM's CPU backend has no such quantisation path -- BF16 is its default
+    # and what AVX-512 accelerates -- so the same 8B here is ~16 GB of weights,
+    # not 4.68. The model that fits is decided by the serving runtime's dtype,
+    # not by the GGUF size.
+    #
+    # Stepping up to the 4B is NOT just a change of model name. Weights,
+    # maxLen and kvCacheSpaceGiB are one budget against 23.3 GiB of
+    # allocatable node, and the 4B moves two of the three:
+    #
+    #                     weights   KV/token   40960-ctx KV   total @8GiB KV
+    #   Qwen3-1.7B (here)  3.4 GB    112 KiB       4.4 GiB        ~14 GiB
+    #   Qwen3-4B           8.0 GB    144 KiB       5.6 GiB        ~18 GiB
+    #
+    # (4B: 36 layers x 8 kv-heads x 128 head-dim, from its own config.json;
+    # same 40960 max_position_embeddings, so maxLen does not change.)
+    #
+    # ~18 GiB is the current memory limit exactly, with nothing spare -- so
+    # the 4B needs the limit raised to ~21Gi, or kvCacheSpaceGiB dropped to 6
+    # (still 43,690 tokens, one full-length sequence plus room). Raising both
+    # does not fit: the node has 23.3 GiB and the kubelet and flannel live
+    # there too.
+    #
+    # Do not lower maxLen to make room. That is the knob that failed first
+    # here and it fails as a 500 per request, not as an OOM.
+    model:
+      name: Qwen/Qwen3-1.7B
+      servedName: qwen3-1.7b
+      # 40960 -- the model's own max_position_embeddings, so this is the
+      # ceiling rather than a choice.
+      #
+      # It was 8192, which is plenty for a chat client and nowhere near enough
+      # for an agentic one. Claude Code sends its system prompt and tool
+      # definitions on every request: 129,497 characters, ~32k tokens, before
+      # the user has typed anything. Add the 8192 output tokens it asks for
+      # and a single "hello" needs ~40k of context, so every request failed
+      # with a 500 out of /v1/messages:
+      #
+      #   maximum context length is 8192 tokens. However, you requested 8192
+      #   output tokens and your prompt contains 129497 characters
+      #
+      # Raising this is not free -- see kvCacheSpaceGiB below, which has to
+      # move with it, and the prefill cost noted in the plan doc.
+      #
+      # And 40960 is a CEILING, not a dial. 40961 was tried and vLLM refused
+      # to start:
+      #
+      #   User-specified max_model_len (40961) is greater than the derived
+      #   max_model_len (max_position_embeddings=40960)
+      #
+      # There is a VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 override, and it is a trap
+      # here: this model uses RoPE, and positions beyond the trained maximum
+      # produce nan rather than an error. The way past 40960 is rope scaling
+      # (YaRN), which is a different change with its own KV cost -- 131072
+      # tokens would be ~14 GiB of KV on its own -- not a +1.
+      #
+      # If a client needs prompt + max_tokens to fit, the number that has to
+      # come down is the client's max_tokens.
+      maxLen: 40960
+
+      # Tool calling. Grouped because the two are one decision: the parser is
+      # meaningless unless calling is on, and turning calling on without a
+      # parser is a startup error.
+      #
+      # WATCHING FOR THE FIX:
+      #   https://github.com/vllm-project/vllm/issues/51283
+      #   "CPUModelRunner inherits GPU-only StructuredOutputsWorker"
+      #   open 2026-08-06, labels bug/cpu. When it closes, flip calling to
+      #   true, redeploy, and run the reproducer below. If the engine
+      #   survives, the fix landed.
+      tool:
+        # OFF, and not a preference -- grammar-constrained tool calling
+        # crashes vLLM's CPU backend outright:
+        #
+        #   vllm/v1/worker/gpu/structured_outputs.py:52  apply_grammar_bitmask
+        #   RuntimeError: pin_memory=True requires a CUDA or other accelerator
+        #                 backend; no pinned memory allocator is available
+        #
+        # Note the gpu/ in that path: the CPU backend reuses the GPU worker,
+        # which hardcodes pin_memory=True. The failure is not a rejected
+        # request -- the worker dies, EngineCore dies with it, the API server
+        # exits, and every request in flight returns 500 until Kubernetes
+        # restarts the pod, which then reloads the model from scratch. To a
+        # client it looks like a hang.
+        #
+        # It fires only when a tool call is actually EMITTED, which is why it
+        # reads as intermittent: ordinary chat is fine and the model often
+        # declines to call anything. Deterministic reproducer:
+        #
+        #   tool_choice: {"type":"tool","name":"Bash"}
+        #
+        # Verified identical on v0.26.0 and v0.27.1, and reported upstream
+        # against v0.25.1 -- so downgrading is not an escape. It is a
+        # regression of #37705, fixed in March 2026 in a different file that
+        # the code has since moved out of.
+        #
+        # Switching structured-outputs backend does not help either -- the
+        # bitmask is applied in vLLM's own worker code, above the backend.
+        #
+        # With this off the same request fails safely, which is the point:
+        #   HTTP 400  tool_choice=function "Bash" requires --tool-call-parser
+        calling: false
+        # Model-specific, so it travels with the model above rather than with
+        # the server flags. Kept set while calling is false: it is the right
+        # value for Qwen3 and costs nothing until the gate opens.
+        parser: qwen3_xml
+
+    # GiB, and explicit. vLLM defaults this to 4 GiB when unset; on the
+    # 7.98 GiB box this replaced, that default plus weights was the most
+    # likely way to OOM the node.
+    #
+    # 8, not the original 2, because maxLen went to 40960 and the two are one
+    # decision. This model's KV cost is fixed and computable from its config:
+    #
+    #   2 (K,V) x 28 layers x 8 kv-heads x 128 head-dim x 2 B (bf16)
+    #     = 114,688 B = 112 KiB per token
+    #
+    # so one full 40,960-token sequence needs 4.4 GiB of KV on its own. At the
+    # old 2 GiB the cache held 18,724 tokens total -- less than half a single
+    # maximum-length request. 8 GiB holds ~74,900, which is one full-length
+    # sequence plus room for a second shorter one to be batched beside it.
+    kvCacheSpaceGiB: 8
+
+    # Six of eight cores, leaving two for the kubelet and flannel. B-0's sweep
+    # is why this costs almost nothing: generation at 4 threads was already
+    # 81% of the 8-thread figure because it is memory-bandwidth-bound, so the
+    # cores given back come out of prefill, not out of replies.
+    threads: 6
+
+  resources:
+    requests:
+      cpu: "6"
+      memory: 8Gi
+      ephemeral-storage: 12Gi
+    limits:
+      # No CPU limit on purpose: a cgroup quota throttles, and throttling a
+      # token generator shows up directly as latency. The request is what
+      # reserves the cores; the limit would only add jitter.
+      #
+      # 18Gi, tracking the KV cache up to 8 GiB. The budget on a 23.3 GiB
+      # node: ~3.4 GB weights + 8 GiB KV + ~3 GB of vLLM runtime and
+      # activations. VLLM_CPU_KVCACHE_SPACE is added on top of the weights by
+      # the CPU backend rather than carved out of a total, so the limit has to
+      # cover both or the pod is OOMKilled the moment the cache fills.
+      memory: 18Gi
+      ephemeral-storage: 20Gi
+
+  # Where this is allowed to run. Both halves are required and they do
+  # different jobs: the toleration lets it onto the tainted cloud node, the
+  # nodeSelector stops it landing anywhere else. With only the toleration it
+  # would be free to schedule onto node1-4, which run etcd.
+  placement:
+    tolerationKey: location
+    tolerationValue: cloud
+    nodeSelectorKey: node.homelab/location
+    nodeSelectorValue: cloud
