@@ -48,7 +48,7 @@ spec:
         # mount and the weights have to come from somewhere on every start.
         #
         # This pulls them at datacenter speed into an emptyDir. The cost is
-        # honest and worth stating: a pod restart re-downloads ~3.4 GB, and a
+        # honest and worth stating: a pod restart re-downloads ~8 GB, and a
         # HuggingFace outage is a failed start. Baking them into an image
         # instead trades that for a registry the node can reach quickly, which
         # this cluster does not have -- its registry is home-side and
@@ -97,15 +97,18 @@ spec:
           volumeMounts:
             - name: models
               mountPath: /models
-          # 6Gi to download a 3.4 GB model, which looks absurd until you know
-          # why: writing a file into an emptyDir generates page cache, and the
-          # kernel charges that page cache to the cgroup that dirtied it. The
-          # pages are reclaimable, but four parallel writers dirtied them
-          # faster than writeback could retire them and the container was
-          # OOMKilled at 2Gi with the download 89% done.
+          # 6Gi to download an ~8 GB model, which looks wrong in both
+          # directions until you know why: writing a file into an emptyDir
+          # generates page cache, the kernel charges that page cache to the
+          # cgroup that dirtied it, and the limit therefore bounds the rate
+          # dirty pages accumulate rather than the file size. Four parallel
+          # writers once outran writeback and were OOMKilled at 2Gi with a
+          # 3.4 GB download 89% done.
           #
           # The fix is both halves: fewer writers above, and enough headroom
-          # here that reclaim never has to win a race.
+          # here that reclaim never has to win a race. That is why this did
+          # not need raising when the model grew -- two writers against 6Gi is
+          # the same race regardless of how long it runs for.
           resources:
             requests:
               cpu: "1"
@@ -179,7 +182,7 @@ spec:
           # buys the load its time, and the other two can then be tight
           # enough to be useful.
           #
-          # 90 x 10s = 15 minutes. Far more than a 1.7B needs; sized so that
+          # 90 x 10s = 15 minutes. Far more than a 4B needs; sized so that
           # stepping the model up in values.yaml does not silently reintroduce
           # the bug this exists to prevent.
           startupProbe:
