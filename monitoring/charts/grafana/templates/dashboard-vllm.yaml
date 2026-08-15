@@ -1,0 +1,133 @@
+# vLLM inference dashboard.
+#
+# The datasource is a template variable of type `datasource`, not a hardcoded
+# uid. That is deliberate: the Prometheus datasource here was created in the UI
+# and its uid is not knowable from this repo, so a hardcoded one would render
+# every panel "Datasource not found". The variable resolves to whichever
+# Prometheus datasource exists and needs no credentials to author.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-vllm
+  namespace: monitoring
+data:
+  vllm.json: |
+    {
+      "title": "vLLM inference",
+      "uid": "vllm-inference",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "ds",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {},
+            "hide": 0,
+            "label": "Datasource"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Queue depth",
+          "description": "Running vs waiting requests. Waiting above zero for any length of time is the signal to scale on -- CPU% is meaningless for a token generator, since one request can peg a core and a hundred queued ones look identical to it.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "vllm:num_requests_running{kubernetes_namespace=\"inference\"}",
+              "legendFormat": "running"
+            },
+            {
+              "refId": "B",
+              "expr": "vllm:num_requests_waiting{kubernetes_namespace=\"inference\"}",
+              "legendFormat": "waiting"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Time to first token",
+          "description": "p50/p95/p99 TTFT. On a CPU backend this is dominated by prefill, so it tracks prompt length far more than load. A cold prefix and a cached one differ by ~45x here.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket{kubernetes_namespace=\"inference\"}[5m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket{kubernetes_namespace=\"inference\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket{kubernetes_namespace=\"inference\"}[5m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Tokens per second",
+          "description": "Generation vs prompt throughput. These are two different machines: generation is memory-bandwidth-bound and flat, prefill is compute-bound and scales with cores.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "none", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(vllm:generation_tokens_total{kubernetes_namespace=\"inference\"}[5m]))",
+              "legendFormat": "generation tok/s"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(vllm:prompt_tokens_total{kubernetes_namespace=\"inference\"}[5m]))",
+              "legendFormat": "prompt tok/s"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "KV cache usage and prefix cache hit rate",
+          "description": "KV usage against VLLM_CPU_KVCACHE_SPACE. The hit rate is the number that makes an agentic client usable at all -- it re-sends an identical multi-thousand-token preamble every turn, and a miss costs the full prefill.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "vllm:kv_cache_usage_perc{kubernetes_namespace=\"inference\"}",
+              "legendFormat": "KV cache used"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(vllm:prefix_cache_hits_total{kubernetes_namespace=\"inference\"}[5m])) / clamp_min(sum(rate(vllm:prefix_cache_queries_total{kubernetes_namespace=\"inference\"}[5m])), 1)",
+              "legendFormat": "prefix cache hit rate"
+            }
+          ]
+        }
+      ]
+    }

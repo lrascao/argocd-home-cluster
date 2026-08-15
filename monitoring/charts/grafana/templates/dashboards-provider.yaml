@@ -1,0 +1,29 @@
+# Dashboard provisioning, which this Grafana did not previously have.
+#
+# Every existing dashboard here was made in the UI and lives in the PVC, so it
+# is backed up by whatever backs the PVC up and by nothing else. Provisioned
+# dashboards are read from disk at startup instead, which makes them part of
+# this repo and survivable across a lost volume.
+#
+# The two coexist: provisioning does not touch UI-created dashboards, it only
+# adds a folder of read-only ones beside them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-provider
+  namespace: monitoring
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'repo'
+        orgId: 1
+        folder: 'Provisioned'
+        type: file
+        # The UI refuses edits rather than silently losing them on restart:
+        # anything under this provider is re-read from the ConfigMap, so an
+        # edit made in the browser would vanish at the next pod restart.
+        disableDeletion: true
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards-provisioned

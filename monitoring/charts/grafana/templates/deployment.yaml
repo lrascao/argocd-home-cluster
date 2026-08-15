@@ -26,8 +26,21 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /var/lib/grafana
+        # Read at startup by the file provider. Deliberately NOT on the PVC:
+        # these dashboards come from git, and putting them on the volume would
+        # give them a second copy that drifts.
+        - name: dashboards-provider
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards
+          mountPath: /var/lib/grafana/dashboards-provisioned
       restartPolicy: Always
       volumes:
       - name: data
         persistentVolumeClaim:
           claimName: pvc-grafana
+      - name: dashboards-provider
+        configMap:
+          name: grafana-dashboards-provider
+      - name: dashboards
+        configMap:
+          name: grafana-dashboard-vllm
