@@ -45,12 +45,12 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "vllm:num_requests_running{kubernetes_namespace=\"inference\"}",
+              "expr": "sum(vllm:num_requests_running{kubernetes_namespace=\"inference\"})",
               "legendFormat": "running"
             },
             {
               "refId": "B",
-              "expr": "vllm:num_requests_waiting{kubernetes_namespace=\"inference\"}",
+              "expr": "sum(vllm:num_requests_waiting{kubernetes_namespace=\"inference\"})",
               "legendFormat": "waiting"
             }
           ]
@@ -119,7 +119,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "vllm:kv_cache_usage_perc{kubernetes_namespace=\"inference\"}",
+              "expr": "sum(vllm:kv_cache_usage_perc{kubernetes_namespace=\"inference\"})",
               "legendFormat": "KV cache used"
             },
             {
