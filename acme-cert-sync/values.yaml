@@ -14,10 +14,19 @@ local:
     # How often to look, in seconds. The certificate changes every 60 days;
     # this is really about noticing the election moving to another node.
     period: 60
-    image: alpine:latest
+    # Alpine with kubectl already in it, pinned to the cluster's own minor.
+    # This was alpine:latest plus an `apk add kubectl` at start time, which
+    # made every restart depend on reaching a package mirror -- the wrong
+    # dependency for the pod that publishes the certificate every public name
+    # is served with, and the same unpinned-dependency shape that took DNS
+    # down in 2026-08. Bump this in step with the cluster.
+    image: alpine/kubectl:1.36.2
 
   delegation:
-    # Namespaces allowed to reference the secret from an HTTPProxy. "*" is
-    # every namespace; replace with an explicit list to narrow it.
+    # Namespaces allowed to reference the secret from an HTTPProxy. Explicit
+    # rather than "*": one wildcard key covers every public name, so the list
+    # is the namespaces that actually serve one. Add a namespace here when it
+    # starts using the wildcard, not before.
     targetNamespaces:
-      - "*"
+      - actual-budget
+      - registry

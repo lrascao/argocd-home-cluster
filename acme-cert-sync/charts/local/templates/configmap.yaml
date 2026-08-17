@@ -8,7 +8,7 @@ data:
     #!/bin/sh
     set -eu
 
-    apk add --quiet --no-cache kubectl
+    # kubectl comes from the image, not from a package fetch at start time.
 
     CERT="${CERT_DIR}/${CERT_NAME}/tls.crt"
     KEY="${CERT_DIR}/${CERT_NAME}/tls.key"
