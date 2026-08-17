@@ -1,0 +1,184 @@
+# Home Assistant voice pipeline.
+#
+# Deliberately a second dashboard rather than more panels on the vLLM one:
+# that dashboard is about a model server, this one is about a spoken turn,
+# and most of what matters here happens outside vLLM entirely.
+#
+# What is live and what is not, stated plainly, because the mix is unusual:
+#
+#   * The agent stage is instrumented. vLLM exports TTFT, generation rate and
+#     the prefix-cache counters, and the LAN gateway exports whether the cloud
+#     node is reachable and how many turns it has had to answer for.
+#   * The STT and TTS stages are NOT. Wyoming is a line-delimited JSON
+#     protocol over a raw socket with no metrics endpoint anywhere in it, so
+#     whisper and piper cannot be scraped. Their numbers here are MEASURED
+#     CONSTANTS with the date they were taken, not a live feed, and the text
+#     panel says so rather than letting a stale figure pass for telemetry.
+#
+# The datasource is a template variable, matching dashboard-vllm.yaml: the
+# Prometheus datasource was created in the UI and its uid is not knowable
+# from this repo, so a hardcoded one renders every panel "Datasource not
+# found".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-voice
+  namespace: monitoring
+data:
+  voice.json: |
+    {
+      "title": "HA voice pipeline",
+      "uid": "ha-voice-pipeline",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "ds",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {},
+            "hide": 0,
+            "label": "Datasource"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "text",
+          "title": "Measured latency budget (2026-08-17)",
+          "description": "Measured against the real services from a pod on node3, using HA's own prompt assembly and request shape. Not live -- whisper and piper export no metrics. Re-measure after any model, thread-count or node change.",
+          "gridPos": { "h": 11, "w": 12, "x": 0, "y": 0 },
+          "options": {
+            "mode": "markdown",
+            "content": "**Open question, cloud node up** — time from the speaker falling silent to the first audible word:\n\n| stage | where | ms |\n| --- | --- | ---: |\n| wake | openWakeWord, node4 | 505 after the word ends |\n| STT | faster-whisper base-int8, node3 | **1272–1286** |\n| agent, to first sentence | Qwen3-1.7B, upcloud1 | 1049–1337 |\n| TTS, to first audio | piper lessac-medium, node2 | 886 |\n| **total to first audio** | | **~3.3 s** |\n\nTTS overlaps generation — HA streams model deltas into piper at sentence boundaries — so the stages above are a chain, not a sum of complete stages.\n\n**Device command** (\"turn off the kitchen light\"): STT 1272 ms + local intent match + a short spoken ack. **Never reaches the model**, so the cloud node's state is irrelevant to it.\n\n**Prefix cache hit vs miss**, same turn: 554 ms → 479 ms TTFT on a 1275-token prompt. Only ~75 ms, because a 1.7B prefills fast. Below **128 prompt tokens there is no caching at all** — the CPU backend's KV block is 128 tokens and a partial block is never cached, so HA's default ~90-token prompt can never hit.\n\n**Cloud node destroyed**: the gateway answers in **~10 ms** with a spoken sentence. Watch the two panels below."
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Prefix cache hit rate",
+          "description": "Next to the budget on purpose. The plan expected this to be the load-bearing number, and for an agentic client re-sending a 28k-token preamble it is. For HA voice it is not: the prompt is ~90 tokens with Control Home Assistant off, which is below one 128-token KV block, so this reads 0 and costs nothing. It becomes real the moment house context goes in the prompt box -- and it is here to show that transition rather than to be watched every day.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 11, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": { "fillOpacity": 10, "lineWidth": 2 }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(vllm:prefix_cache_hits_total{kubernetes_namespace=\"inference\"}[10m])) / clamp_min(sum(rate(vllm:prefix_cache_queries_total{kubernetes_namespace=\"inference\"}[10m])), 1)",
+              "legendFormat": "hit rate"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "LLM reachable",
+          "description": "The LAN gateway's own view of the cloud node, polled every 5s. Red is not an alert: the node is designed to be destroyed, and this reading DOWN with the degraded counter climbing is the system working as intended. Red plus a flat degraded counter means nobody has asked an open question since it went.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 11 },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": { "text": "DOWN - degrading", "color": "red", "index": 0 },
+                    "1": { "text": "up", "color": "green", "index": 1 }
+                  }
+                }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(voice_llm_gateway_upstream_up{kubernetes_namespace=\"voice\"})",
+              "legendFormat": "upstream"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Conversation turns by outcome",
+          "description": "proxied = answered by the model. degraded = the cloud node was gone and the gateway spoke for it, which is a normal 200 the pipeline runs to completion on. truncated = the node died MID-answer, after bytes were already on the wire; the person got half a sentence. truncated should be rare and is the only line here that is genuinely a fault.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 6, "w": 18, "x": 6, "y": 11 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (outcome) (increase(voice_llm_gateway_requests_total{kubernetes_namespace=\"voice\"}[10m]))",
+              "legendFormat": "{{ `{{outcome}}` }}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Agent stage - time to first token",
+          "description": "The only stage of the budget that is live. p50 and p95 from vLLM's own histogram. This is what the top-left table calls the agent stage, minus the wait for the first full sentence that TTS needs before it can start speaking.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+          "fieldConfig": {
+            "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{kubernetes_namespace=\"inference\"}[10m])))",
+              "legendFormat": "p50"
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{kubernetes_namespace=\"inference\"}[10m])))",
+              "legendFormat": "p95"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Generation rate",
+          "description": "Tokens per second out of the model. The measured baseline for Qwen3-1.7B on this 8 vCPU node is ~24-29 tok/s; a sustained drop means something else is eating the node's memory bandwidth, which is what generation on a CPU backend is bound by. A 40-token reply at 24 tok/s is 1.7s of the budget above.",
+          "datasource": { "type": "prometheus", "uid": "${ds}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(vllm:generation_tokens_total{kubernetes_namespace=\"inference\"}[5m]))",
+              "legendFormat": "generation tok/s"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(vllm:prompt_tokens_total{kubernetes_namespace=\"inference\"}[5m]))",
+              "legendFormat": "prefill tok/s"
+            }
+          ]
+        }
+      ]
+    }

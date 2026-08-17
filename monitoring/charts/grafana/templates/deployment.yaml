@@ -53,3 +53,5 @@ spec:
               name: grafana-dashboard-vllm
           - configMap:
               name: grafana-dashboard-heatpump
+          - configMap:
+              name: grafana-dashboard-voice
