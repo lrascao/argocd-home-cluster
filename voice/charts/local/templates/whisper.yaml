@@ -1,0 +1,138 @@
+# Speech to text. The first stage a spoken sentence hits, and the one that
+# actually costs CPU on bare metal -- which is why it carries the tightest
+# comments and the node4 preference.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wyoming-whisper-models
+  namespace: voice
+  labels:
+    app: wyoming-whisper
+    app.kubernetes.io/part-of: voice
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.whisper.storage.className }}
+  resources:
+    requests:
+      storage: {{ .Values.whisper.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wyoming-whisper
+  namespace: voice
+  labels:
+    app: wyoming-whisper
+    app.kubernetes.io/part-of: voice
+spec:
+  replicas: 1
+  # Recreate, because the PVC is ReadWriteOnce. A RollingUpdate would stand
+  # the new pod up first, and it would sit Pending forever waiting for a
+  # volume the old pod has not let go of -- a rollout that never finishes and
+  # never says why.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: wyoming-whisper
+  template:
+    metadata:
+      labels:
+        app: wyoming-whisper
+        app.kubernetes.io/part-of: voice
+    spec:
+      enableServiceLinks: false
+      {{- include "voice.affinity" (dict "ctx" . "avoidNode" .Values.placement.avoidNode) | nindent 6 }}
+      containers:
+        - name: whisper
+          image: {{ .Values.whisper.image }}
+          args:
+            - --uri
+            - tcp://0.0.0.0:{{ .Values.whisper.port }}
+            - --model
+            - {{ .Values.whisper.model }}
+            - --language
+            - {{ .Values.whisper.language }}
+            - --data-dir
+            - /data
+            - --download-dir
+            - /data
+            - --beam-size
+            - {{ .Values.whisper.beamSize | quote }}
+            # Matched to the CPU limit below, NOT left at the image's default
+            # of 4. On a 4-core node the default would spawn four threads
+            # against a two-core quota, exhaust it partway through each
+            # cgroup period and get parked for the remainder. The transcript
+            # is identical and the wall clock roughly doubles, which reads as
+            # "whisper is slow on this hardware" rather than as throttling.
+            - --cpu-threads
+            - {{ .Values.whisper.threads | quote }}
+            # Silero VAD in front of the decoder. Costs about a millisecond
+            # per chunk and stops the classic failure where whisper is handed
+            # a second of room tone and confidently transcribes song lyrics or
+            # "thank you for watching". A hallucinated sentence is worse than
+            # silence here, because it is fed to a conversation agent as if
+            # someone had said it.
+            - --vad-filter
+          env:
+            # faster-whisper reaches CTranslate2, which reaches OpenMP. The
+            # --cpu-threads flag above covers CTranslate2's own pool; this
+            # covers everything else in the process that asks OpenMP how wide
+            # to go, and OpenMP's answer is otherwise "one per visible core".
+            - name: OMP_NUM_THREADS
+              value: {{ .Values.whisper.threads | quote }}
+          ports:
+            - name: wyoming
+              containerPort: {{ .Values.whisper.port }}
+          volumeMounts:
+            - name: models
+              mountPath: /data
+          # TCP, not HTTP: Wyoming is a line-delimited JSON protocol over a
+          # raw socket and serves no HTTP endpoint at all. A tcpSocket probe
+          # proves the server is accepting connections, which is as much as
+          # can be checked without speaking the protocol.
+          #
+          # The startupProbe is what covers the first-boot model download --
+          # base-int8 is ~150 MB and arrives before the socket opens. 60 x 5s
+          # = 5 minutes, generous enough that a slow morning at HuggingFace
+          # is not a CrashLoop. After the PVC has it, startup is seconds.
+          startupProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+{{ toYaml .Values.whisper.resources | indent 12 }}
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: wyoming-whisper-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wyoming-whisper
+  namespace: voice
+  labels:
+    app: wyoming-whisper
+    app.kubernetes.io/part-of: voice
+spec:
+  type: ClusterIP
+  selector:
+    app: wyoming-whisper
+  ports:
+    - name: wyoming
+      port: {{ .Values.whisper.port }}
+      targetPort: wyoming
+      protocol: TCP

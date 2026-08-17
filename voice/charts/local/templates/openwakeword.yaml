@@ -1,0 +1,83 @@
+# Wake word.
+#
+# Deployed with an honest caveat: nothing in this house streams a microphone
+# at it yet. HA has no assist_satellite and no ESPHome voice device, so the
+# only way to start a pipeline today is push-to-talk from the companion app
+# or the kitchen tablet, and a push-to-talk pipeline skips the wake stage
+# entirely.
+#
+# It is here anyway because it is ~150 MB and one Deployment, and because
+# "wake" is a stage of the latency budget the plan asks for. With this
+# running the stage is measurable and the pipeline is complete the day a
+# satellite is added, rather than being a second project.
+#
+# No PVC: 2.1.0 bundles its models and marks --preload-model, --models-dir
+# and --output-dir deprecated, so there is nothing downloaded to persist.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wyoming-openwakeword
+  namespace: voice
+  labels:
+    app: wyoming-openwakeword
+    app.kubernetes.io/part-of: voice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wyoming-openwakeword
+  template:
+    metadata:
+      labels:
+        app: wyoming-openwakeword
+        app.kubernetes.io/part-of: voice
+    spec:
+      enableServiceLinks: false
+      {{- include "voice.affinity" (dict "ctx" .) | nindent 6 }}
+      containers:
+        - name: openwakeword
+          image: {{ .Values.openwakeword.image }}
+          args:
+            - --uri
+            - tcp://0.0.0.0:{{ .Values.openwakeword.port }}
+          env:
+            - name: OMP_NUM_THREADS
+              value: {{ .Values.openwakeword.threads | quote }}
+          ports:
+            - name: wyoming
+              containerPort: {{ .Values.openwakeword.port }}
+          startupProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+{{ toYaml .Values.openwakeword.resources | indent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wyoming-openwakeword
+  namespace: voice
+  labels:
+    app: wyoming-openwakeword
+    app.kubernetes.io/part-of: voice
+spec:
+  type: ClusterIP
+  selector:
+    app: wyoming-openwakeword
+  ports:
+    - name: wyoming
+      port: {{ .Values.openwakeword.port }}
+      targetPort: wyoming
+      protocol: TCP

@@ -1,0 +1,115 @@
+# Text to speech. The last stage before someone hears an answer, and the one
+# whose latency is partly hidden: piper 2.x streams audio on sentence
+# boundaries by default, so the budget that matters is time-to-first-audio,
+# not time-to-complete-utterance.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wyoming-piper-voices
+  namespace: voice
+  labels:
+    app: wyoming-piper
+    app.kubernetes.io/part-of: voice
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.piper.storage.className }}
+  resources:
+    requests:
+      storage: {{ .Values.piper.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wyoming-piper
+  namespace: voice
+  labels:
+    app: wyoming-piper
+    app.kubernetes.io/part-of: voice
+spec:
+  replicas: 1
+  # See whisper.yaml: ReadWriteOnce plus RollingUpdate is a rollout that
+  # deadlocks on its own volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: wyoming-piper
+  template:
+    metadata:
+      labels:
+        app: wyoming-piper
+        app.kubernetes.io/part-of: voice
+    spec:
+      enableServiceLinks: false
+      {{- include "voice.affinity" (dict "ctx" .) | nindent 6 }}
+      containers:
+        - name: piper
+          image: {{ .Values.piper.image }}
+          args:
+            - --uri
+            - tcp://0.0.0.0:{{ .Values.piper.port }}
+            - --voice
+            - {{ .Values.piper.voice }}
+            - --data-dir
+            - /data
+            - --download-dir
+            - /data
+            # Streaming is ON, by not passing --no-streaming. Stated here as a
+            # comment rather than as a flag because the flag does not exist in
+            # the affirmative -- 2.x only offers the opt-out. It matters: with
+            # streaming, audio starts flowing after the first sentence is
+            # synthesised instead of after the last, which is most of the
+            # perceived TTS latency on a multi-sentence answer.
+          env:
+            # piper runs onnxruntime, which sizes its intra-op pool from the
+            # visible core count unless told otherwise. Same trap as whisper:
+            # left alone it would run 4 threads against a 2-core quota and
+            # spend a chunk of every cgroup period throttled.
+            - name: OMP_NUM_THREADS
+              value: {{ .Values.piper.threads | quote }}
+          ports:
+            - name: wyoming
+              containerPort: {{ .Values.piper.port }}
+          volumeMounts:
+            - name: voices
+              mountPath: /data
+          startupProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: wyoming
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+{{ toYaml .Values.piper.resources | indent 12 }}
+      volumes:
+        - name: voices
+          persistentVolumeClaim:
+            claimName: wyoming-piper-voices
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wyoming-piper
+  namespace: voice
+  labels:
+    app: wyoming-piper
+    app.kubernetes.io/part-of: voice
+spec:
+  type: ClusterIP
+  selector:
+    app: wyoming-piper
+  ports:
+    - name: wyoming
+      port: {{ .Values.piper.port }}
+      targetPort: wyoming
+      protocol: TCP

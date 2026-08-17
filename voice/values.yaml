@@ -1,0 +1,126 @@
+local:
+  # The LAN half of Home Assistant voice: speech-to-text, text-to-speech and
+  # wake word. The LLM half is the `inference` app and lives on the cloud node.
+  #
+  # THE SPLIT IS THE POINT, and it is not an optimisation:
+  #
+  #   * Microphone audio never leaves the house. Shipping a 3-second utterance
+  #     to Madrid and a synthesised reply back defeats the reason for running
+  #     voice locally at all, and adds two round trips to a budget measured in
+  #     hundreds of milliseconds.
+  #   * These survive the cloud node being destroyed. That node is designed to
+  #     be reaped -- see the lifecycle guardrails in the plan -- so anything
+  #     parked on it is temporary by construction. STT and TTS are not
+  #     allowed to be temporary, because with the built-in conversation agent
+  #     they are a complete, working voice assistant on their own.
+  #
+  # Small enough to be a guest on bare metal: whisper base-int8 is ~150 MB of
+  # weights and piper's medium voice ~63 MB, against the multi-GB the LLM
+  # needs.
+
+  # Where these are allowed to run: node1-4, never the cloud node.
+  #
+  # Enforcement is really the ABSENCE of a toleration -- the cloud node
+  # carries location=cloud:NoSchedule and nothing here tolerates it, so the
+  # scheduler will not place these there. The nodeAffinity below is belt and
+  # braces: it says the intent out loud, and it keeps holding if someone
+  # later copies a toleration in from the inference chart, or if the taint is
+  # ever dropped during a rebuild.
+  #
+  # DoesNotExist rather than NotIn[cloud], because node1-4 carry no
+  # node.homelab/location label at all -- only cloud nodes are labelled, by
+  # the CloudNode composition. A NotIn match against a missing label does not
+  # match in Kubernetes, so NotIn would exclude every LAN node and leave
+  # these Pending. That is a genuinely easy mistake and the failure looks
+  # like a capacity problem.
+  placement:
+    lanOnlyLabelKey: node.homelab/location
+
+    # Soft, and temporary. node4's etcd shows wal_fsync ~5 ms against ~1.8 ms
+    # on its peers -- inside the OK band, but it is the leading indicator of
+    # the failure pattern this cluster knows best, and its disk is still due
+    # for replacement. Whisper is the one component here that burns real CPU,
+    # and pattern #1 cannot tell etcd starved of CPU from etcd starved of
+    # disk: the signature is identical.
+    #
+    # preferred, not required, so a three-node outage still gets voice rather
+    # than getting principles. DELETE THIS once node4's disk is swapped.
+    avoidNode: node4
+
+  # Hard limits on all three, which is what makes running these beside etcd
+  # defensible rather than merely convenient.
+  #
+  # In every case the thread count is set to MATCH the CPU limit rather than
+  # being left to the runtime's "one thread per visible core" default. That
+  # pairing is the whole trick:
+  #
+  #   * threads == limit  -> the container uses its full allowance and is
+  #     never throttled, so the limit costs no latency.
+  #   * threads > limit   -> the cgroup quota is exhausted mid-inference and
+  #     the kernel parks the process for the rest of the period. Latency
+  #     roughly doubles and it looks like a slow model, not like throttling.
+  #
+  # Getting this wrong is the standard way a CPU limit turns into a
+  # performance bug, and these boxes have 4 cores, so a container that thinks
+  # it has 4 threads against a limit of 2 is exactly that.
+
+  whisper:
+    image: rhasspy/wyoming-whisper:3.6.0
+    # base-int8: the accuracy/latency knee on hardware this old. tiny-int8 is
+    # roughly twice as fast and audibly worse at names and numbers -- which is
+    # most of what gets said to a house. small-int8 is ~3x slower for a gain
+    # you cannot hear over a kitchen.
+    model: base-int8
+    language: en
+    # 1 = greedy. The default beam of 5 costs ~5x the decode work for an
+    # accuracy difference that does not survive contact with a far-field
+    # microphone. This is the single biggest STT latency lever here.
+    beamSize: 1
+    port: 10300
+    threads: 2
+    storage:
+      size: 2Gi
+      # Longhorn, not emptyDir, and the reason is an outage rather than a
+      # restart. With emptyDir every pod restart re-downloads the model from
+      # HuggingFace -- so a house with no internet would have no
+      # speech-to-text, which is precisely the scenario local voice exists
+      # for. 2Gi leaves room to try small-int8 without resizing.
+      className: longhorn
+    resources:
+      requests:
+        cpu: 200m
+        memory: 400Mi
+      limits:
+        cpu: "2"
+        memory: 1536Mi
+
+  piper:
+    image: rhasspy/wyoming-piper:2.4.2
+    voice: en_US-lessac-medium
+    port: 10200
+    threads: 2
+    storage:
+      size: 1Gi
+      className: longhorn
+    resources:
+      requests:
+        cpu: 100m
+        memory: 150Mi
+      limits:
+        cpu: "2"
+        memory: 512Mi
+
+  openwakeword:
+    image: rhasspy/wyoming-openwakeword:2.1.0
+    port: 10400
+    threads: 1
+    # No PVC: 2.1.0 bundles its models in the image and marks --preload-model,
+    # --models-dir and --output-dir deprecated. Nothing is downloaded at
+    # runtime, so there is nothing to persist.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 150Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
