@@ -79,6 +79,43 @@ local:
       # come down is the client's max_tokens.
       maxLen: 40960
 
+      # Qwen3 is a hybrid reasoning model and its chat template turns
+      # thinking ON unless told otherwise. For a voice assistant that is not
+      # a quality setting, it is a correctness one -- measured here against
+      # Home Assistant's own request shape, max_output_tokens 150:
+      #
+      #   thinking on   150 output tokens, status "incomplete", reason
+      #                 max_output_tokens, and NOT ONE WORD of answer. The
+      #                 whole budget went into <think>...</think> and the
+      #                 reply never began.
+      #   thinking off  9 output tokens, status "completed",
+      #                 "Hello, I'm here to help!"
+      #
+      # Two separate failures, either of which is fatal:
+      #
+      #   * Latency. Thinking is billed at the same generation rate as the
+      #     answer, so a couple of hundred tokens of deliberation is several
+      #     seconds of silence BEFORE the reply starts -- on a budget where
+      #     the whole spoken turn is supposed to land in ~2 s.
+      #   * The answer is spoken. Home Assistant hands the assistant text
+      #     straight to piper. With thinking inline, what comes out of the
+      #     speaker is the model reasoning about the question, out loud, and
+      #     then getting cut off before answering it.
+      #
+      # Set server-side rather than per-request because Home Assistant's
+      # openai_conversation integration has nowhere to put it: it builds its
+      # own model_args and sends no chat_template_kwargs. The alternatives
+      # are worse -- "/no_think" smuggled into the instructions prompt relies
+      # on a soft switch inside the template and burns prompt tokens, and
+      # --reasoning-parser only MOVES the thinking into a separate field
+      # after paying for every token of it.
+      #
+      # This applies to every client of this endpoint, which is the intended
+      # scope: voice is the anchor workload here. Anything that genuinely
+      # wants Qwen3 to think can pass chat_template_kwargs itself, since a
+      # per-request value overrides this default.
+      thinking: false
+
       # Tool calling. Grouped because the two are one decision: the parser is
       # meaningless unless calling is on, and turning calling on without a
       # parser is a startup error.

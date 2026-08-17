@@ -149,6 +149,15 @@ spec:
             # reaching for --no-enable-prefix-caching, is a visible diff rather
             # than an unexplained tenfold regression in the latency budget.
             - --enable-prefix-caching
+            {{- if not .Values.vllm.model.thinking }}
+            # Applied to every request that does not override it. See
+            # values.yaml: with Qwen3's thinking left on, a Home Assistant
+            # voice turn spends its whole output budget deliberating and
+            # comes back "incomplete" with no answer in it -- and whatever
+            # did get generated is handed to piper and spoken aloud.
+            - --default-chat-template-kwargs
+            - '{"enable_thinking": false}'
+            {{- end }}
             {{- if .Values.vllm.model.tool.calling }}
             # Gated: this pair is what arms the crash documented in
             # values.yaml. Enabling it on the CPU backend turns any emitted
