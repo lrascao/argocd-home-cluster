@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+  namespace: voice
+  labels:
+    app: llm-gateway
+    app.kubernetes.io/part-of: voice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-gateway
+  template:
+    metadata:
+      labels:
+        app: llm-gateway
+        app.kubernetes.io/part-of: voice
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        # Rolls the pod when the script changes, which a ConfigMap mount
+        # otherwise would not do -- the file updates in place and the running
+        # process keeps the old one, so the deploy silently does nothing.
+        #
+        # Rendered through `include` rather than `.Files.Get`, because Helm
+        # deliberately excludes templates/ from .Files: that spelling returns
+        # the empty string, hashes to the same value forever, and produces an
+        # annotation that looks like it is working. It is also why the
+        # ConfigMap lives in its own file -- including THIS file here would
+        # render the annotation that includes this file, without end.
+        checksum/app: {{ include (print $.Template.BasePath "/llm-gateway-configmap.yaml") . | sha256sum | trunc 16 }}
+    spec:
+      enableServiceLinks: false
+      {{- include "voice.affinity" (dict "ctx" .) | nindent 6 }}
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image }}
+          command: ["python3", "-u", "/app/gateway.py"]
+          env:
+            - name: UPSTREAM
+              value: {{ .Values.gateway.upstream | quote }}
+            - name: MODEL_NAME
+              value: {{ .Values.gateway.modelName | quote }}
+            - name: DEGRADED_TEXT
+              value: {{ .Values.gateway.degradedText | quote }}
+            - name: CONNECT_TIMEOUT
+              value: {{ .Values.gateway.connectTimeoutSeconds | quote }}
+            - name: HEALTH_PERIOD
+              value: {{ .Values.gateway.healthPeriodSeconds | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+          volumeMounts:
+            - name: app
+              mountPath: /app
+          # Probes hit /healthz, which is the GATEWAY's own liveness and
+          # says nothing about the upstream. That separation is the point:
+          # this pod is healthy precisely when it is able to answer for a
+          # missing upstream, so tying its readiness to vLLM would take the
+          # fallback out of the Service at the exact moment it is needed.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          resources:
+{{ toYaml .Values.gateway.resources | indent 12 }}
+      volumes:
+        - name: app
+          configMap:
+            name: llm-gateway-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-gateway
+  namespace: voice
+  labels:
+    app: llm-gateway
+    app.kubernetes.io/part-of: voice
+spec:
+  type: ClusterIP
+  selector:
+    app: llm-gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

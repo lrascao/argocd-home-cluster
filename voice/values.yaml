@@ -110,6 +110,44 @@ local:
         cpu: "2"
         memory: 512Mi
 
+  # The seam that lets the cloud node stay disposable. See the long comment
+  # at the top of templates/llm-gateway.yaml for what breaks without it --
+  # briefly: a raising conversation agent aborts the pipeline BEFORE the TTS
+  # stage, so the failure mode is silence rather than an apology, and a
+  # failing models.list() at HA startup removes the conversation entity and
+  # takes plain device control down with it.
+  gateway:
+    # Stock python, no build, no registry: the script is mounted from a
+    # ConfigMap. A fallback component should not have a supply chain.
+    image: python:3.12-slim
+    upstream: http://vllm.inference.svc.cluster.local:8000
+    # Must match vllm.model.servedName in the inference chart. It is what
+    # gets reported to HA's models.list() while the upstream is away, and HA
+    # stores that string in the config entry.
+    modelName: qwen3-1.7b
+
+    # What the house says when the model is not there. Constraints worth
+    # knowing: it is spoken aloud, so it should be short; and it should say
+    # what still WORKS, because the person is standing in a room waiting to
+    # be helped, not reading a status page.
+    degradedText: >-
+      The language model is offline right now, so I cannot answer open
+      questions. I can still control the house.
+
+    # Seconds. Only ever paid on the first request after an upstream dies
+    # between health polls -- the poll below is what makes the steady-state
+    # fallback instant.
+    connectTimeoutSeconds: 2
+    healthPeriodSeconds: 5
+
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
   openwakeword:
     image: rhasspy/wyoming-openwakeword:2.1.0
     port: 10400

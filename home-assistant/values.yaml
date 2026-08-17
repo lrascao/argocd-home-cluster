@@ -1,4 +1,38 @@
 home-assistant:
+  # How the built-in OpenAI Conversation integration is pointed at the
+  # house's own model instead of at OpenAI.
+  #
+  # There is no setting for this. openai_conversation constructs
+  # openai.AsyncOpenAI(api_key=..., http_client=...) and never passes
+  # base_url, so its config flow offers an API key and nothing else. But the
+  # openai SDK falls back to OPENAI_BASE_URL from the environment before it
+  # falls back to api.openai.com -- so this env var IS the integration's
+  # missing setting. (The API key it does ask for is unused: vLLM is started
+  # without --api-key and accepts anything. Put a placeholder in the box.)
+  #
+  # Pointed at the LAN gateway and NOT at vllm.inference directly. That
+  # indirection is the degradation design, and it is load-bearing in two
+  # places, both of which bite the moment the cloud node is destroyed:
+  #
+  #   * A conversation agent that RAISES aborts the Assist pipeline before
+  #     the text-to-speech stage runs at all, so what a person standing in
+  #     the kitchen gets is silence, not an apology.
+  #   * async_setup_entry calls models.list() and raises ConfigEntryNotReady
+  #     when it fails, so an HA restart while the node is gone leaves no
+  #     conversation entity -- and the pipeline that owns "turn off the
+  #     kitchen light" then points at a missing agent. Device control taken
+  #     down by the absence of a model it never needed.
+  #
+  # The gateway answers both cases itself, in vLLM's own response shape. See
+  # voice/charts/local/templates/llm-gateway-configmap.yaml.
+  #
+  # Note the scope: an env var is process-wide, so every OpenAI Conversation
+  # entry in this Home Assistant talks to the house model. That is the intent
+  # here, and it is the one thing to undo if an entry ever needs real OpenAI.
+  env:
+    - name: OPENAI_BASE_URL
+      value: http://llm-gateway.voice.svc.cluster.local:8000/v1
+
   persistence:
     enabled: true
     accessMode: ReadWriteOnce
