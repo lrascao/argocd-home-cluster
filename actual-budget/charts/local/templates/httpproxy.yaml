@@ -4,13 +4,21 @@ metadata:
   namespace: actual-budget
   name: actual-budget
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt
     ingress.kubernetes.io/force-ssl-redirect: "true"
-    kubernetes.io/tls-acme: "true"
+    # An Ingress secretName is validated as an RFC 1123 subdomain, so the
+    # "namespace/name" form an HTTPProxy would take is rejected by the
+    # apiserver before contour ever sees it. This annotation is how contour
+    # takes the namespace for an Ingress instead.
+    projectcontour.io/tls-cert-namespace: acme
 spec:
   ingressClassName: contour
   tls:
-  - secretName: certs-actual-budget
+  # The wildcard the coredns acme plugin issues over DNS01, published by
+  # acme-cert-sync and delegated here with a TLSCertificateDelegation. Not
+  # cert-manager: this name is in dns.hairpin, so it resolves to the node
+  # addresses for the whole internet, and an http01 challenge can never reach
+  # it. DNS01 never connects to the host at all, so the hairpin is irrelevant.
+  - secretName: wildcard-88288338-xyz
     hosts:
     - actual.88288338.xyz
   rules:
