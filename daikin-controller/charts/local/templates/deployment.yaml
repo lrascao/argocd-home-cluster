@@ -19,7 +19,7 @@ spec:
         app: daikin-controller
     spec:
       containers:
-      - image: registry.88288338.xyz:5000/daikin-controller:latest
+      - image: registry.88288338.xyz/daikin-controller:latest
         name: controller
         ports:
         - name: liveness-port

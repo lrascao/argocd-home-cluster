@@ -19,7 +19,7 @@ spec:
         app: eot
     spec:
       containers:
-      - image: registry.88288338.xyz:5000/eot:latest
+      - image: registry.88288338.xyz/eot:latest
         name: eot
         ports:
         - name: liveness-port
