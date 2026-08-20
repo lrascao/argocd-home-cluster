@@ -28,6 +28,11 @@ spec:
           httpGet:
             path: /healthz
             port: liveness-port
+          # 5s, not the 1s default. The controller is a single-worker uvicorn
+          # that blocks on the Daikin OIDC token refresh, so /healthz can miss
+          # a 1s deadline while the process is perfectly healthy -- 47 Unhealthy
+          # events against 0 restarts on 2026-08-20. failureThreshold stays 3.
+          timeoutSeconds: 5
         env:
         - name: DAIKIN_CLIENT_ID
           value: {{ .Values.daikin.client_id }}
