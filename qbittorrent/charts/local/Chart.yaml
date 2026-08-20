@@ -1,4 +1,0 @@
-apiVersion: v1
-description: Local QbitTorrent client with web UI
-name: local
-version: 0.0.1

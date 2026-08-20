@@ -1,4 +1,0 @@
-apiVersion: v1
-description: Local Plex chart
-name: local
-version: 0.0.1
