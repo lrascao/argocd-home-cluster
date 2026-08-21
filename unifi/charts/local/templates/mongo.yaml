@@ -1,0 +1,156 @@
+---
+# The init script the official mongo image runs exactly once, on a first start
+# against an empty data directory. It is a .sh rather than a .js so the
+# credentials can arrive as environment variables from the Secret instead of
+# being baked into this ConfigMap as literals.
+#
+# db.createUser runs against admin (the `use` line) because clusterMonitor is
+# an admin-database role. The three extra dbOwner grants are not optional: the
+# controller opens unifi_stat, unifi_audit and unifi_restore itself and fails
+# to start if it cannot.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unifi-mongo-init
+  namespace: {{ .Values.namespace }}
+data:
+  init-mongo.sh: |
+    #!/bin/bash
+
+    if which mongosh > /dev/null 2>&1; then
+      mongo_init_bin='mongosh'
+    else
+      mongo_init_bin='mongo'
+    fi
+    "${mongo_init_bin}" <<EOF
+    use ${MONGO_AUTHSOURCE}
+    db.auth("${MONGO_INITDB_ROOT_USERNAME}", "${MONGO_INITDB_ROOT_PASSWORD}")
+    db.createUser({
+      user: "${MONGO_USER}",
+      pwd: "${MONGO_PASS}",
+      roles: [
+        "clusterMonitor",
+        { db: "${MONGO_DBNAME}", role: "dbOwner" },
+        { db: "${MONGO_DBNAME}_stat", role: "dbOwner" },
+        { db: "${MONGO_DBNAME}_audit", role: "dbOwner" },
+        { db: "${MONGO_DBNAME}_restore", role: "dbOwner" }
+      ]
+    })
+    EOF
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: unifi-mongo-data
+  namespace: {{ .Values.namespace }}
+spec:
+  storageClassName: {{ .Values.mongo.persistence.storageClass }}
+  accessModes:
+    # ReadWriteOnce on purpose. Longhorn implements ReadWriteMany with an
+    # internal NFS share-manager, and WiredTiger on NFS corrupts. RWO is a
+    # replicated block device with ext4 on it.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.mongo.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unifi-mongo
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: unifi-mongo
+spec:
+  type: ClusterIP
+  ports:
+    - name: mongo
+      port: 27017
+      protocol: TCP
+      targetPort: 27017
+  selector:
+    app: unifi-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unifi-mongo
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: unifi-mongo
+spec:
+  replicas: 1
+  strategy:
+    # Recreate, not the default RollingUpdate. The claim is ReadWriteOnce, so
+    # a rolling update would stand up a second pod that can never attach the
+    # volume and then wait for it to become ready before retiring the first --
+    # a deadlock that resolves only by deleting the new pod by hand.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: unifi-mongo
+  template:
+    metadata:
+      labels:
+        app: unifi-mongo
+    spec:
+      affinity:
+        {{- include "local.onPremAffinity" . | nindent 8 }}
+      containers:
+        - name: mongo
+          image: {{ .Values.mongo.image }}
+          args:
+            - --wiredTigerCacheSizeGB
+            - {{ .Values.mongo.wiredTigerCacheSizeGB | quote }}
+          env:
+            # Setting the root credentials is what makes the image enable
+            # authentication at all; the init script then runs already
+            # authenticated as this user.
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: MONGO_INITDB_ROOT_PASSWORD
+            {{- include "local.mongoEnv" . | nindent 12 }}
+            - name: MONGO_DBNAME
+              value: {{ .Values.mongo.dbName | quote }}
+            - name: MONGO_AUTHSOURCE
+              value: {{ .Values.mongo.authSource | quote }}
+          ports:
+            - containerPort: 27017
+              name: mongo
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          # tcpSocket rather than a mongosh --eval ping: with authentication
+          # on, a shell probe is a login attempt every few seconds, and
+          # spawning mongosh costs more than the check is worth.
+          readinessProbe:
+            tcpSocket:
+              port: 27017
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 27017
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.mongo.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: unifi-mongo-data
+        - name: init
+          configMap:
+            name: unifi-mongo-init
+            defaultMode: 0755

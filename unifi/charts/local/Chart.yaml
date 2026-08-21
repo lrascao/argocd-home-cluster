@@ -1,0 +1,4 @@
+apiVersion: v1
+description: UniFi Network controller and its MongoDB, for the U6+ access point
+name: local
+version: 0.0.1

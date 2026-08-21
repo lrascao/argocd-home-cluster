@@ -1,0 +1,107 @@
+local:
+  namespace: unifi
+
+  # The address the AP is told to inform to, and the one the browser hits.
+  #
+  # This is the keepalived ingress VIP (roles/keepalived in the ansible repo),
+  # reached by putting it in externalIPs on an otherwise ordinary ClusterIP
+  # Service. There is no LoadBalancer controller in this cluster and the house
+  # pattern -- NodePort behind an haproxy frontend -- cannot carry STUN,
+  # because haproxy is mode tcp and 3478 is udp. kube-proxy is in iptables
+  # mode and DNATs externalIPs for udp as happily as for tcp, so one address
+  # covers all three ports with nothing new installed.
+  #
+  # Failover is already solved: keepalived floats this VIP to a healthy node
+  # in ~3s, and every node carries the same DNAT rules, so whichever one holds
+  # it can reach the pod wherever the scheduler put it.
+  #
+  # The routers forward WAN 80/443/9025/9883 here and their accept rule names
+  # only those four ports, so nothing below is exposed to the internet.
+  externalIP: 192.168.3.40
+
+  # Resolves to externalIP above, via the `unifi` entry in the ansible repo's
+  # config.yaml. Used for the inform URL, which the AP memorises -- hence a
+  # name rather than the address.
+  host: unifi.home
+
+  # The nodes themselves run Etc/UTC, but this is deliberately local time:
+  # it is what the controller schedules its nightly automatic backup against
+  # and what timestamps every graph and event in the UI. Leaving it UTC means
+  # the backup fires at an hour nobody expects and every log entry needs
+  # mental arithmetic.
+  timezone: Europe/Lisbon
+
+  # Secret holding the mongo credentials, created from a SealedSecret in this
+  # chart. Never literals: the same four values are read by the mongo
+  # container (to create the users) and the controller (to log in).
+  secretName: unifi-mongo
+
+  controller:
+    # Network 9.5.21. NOT the newest tag -- images now go to 10.5.67 -- and
+    # that is deliberate. LinuxServer documents exactly two pairings: 8.1+
+    # takes mongo 3.6-7.0, and 9.0+ additionally takes 8.0. Nothing states
+    # what 10.x wants, so this is the newest controller whose database
+    # pairing is actually written down somewhere.
+    image: lscr.io/linuxserver/unifi-network-application:9.5.21-ls109
+
+    # Java heap, in MB. Set explicitly because the JVM sizes its default heap
+    # from what it can see, and what it can see here is the node's RAM, not
+    # the 2Gi cgroup limit below -- so the default is a heap the container is
+    # not allowed to have, and the first busy moment is an OOMKill that reads
+    # like a crash in the controller. 1024 of heap under a 2Gi limit leaves
+    # room for metaspace, thread stacks and the native allocations.
+    memLimit: 1024
+    memStartup: 1024
+
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+
+    persistence:
+      # /config, which is also where the controller's own automatic backups
+      # land (/config/data/backup/autobackup). Sized for the backup retention
+      # rather than for the config, which is tiny.
+      size: 5Gi
+      storageClass: longhorn
+
+  mongo:
+    # Pinned to a patch, not a series: mongo does not do automatic upgrades
+    # between major versions, and an unpinned tag turns a pull into one.
+    # 7.0 is inside the documented window for a 9.x controller.
+    #
+    # 7.0 rather than 4.4 because every node in this cluster reports avx
+    # (node1 i5-4570S, node2 i5-6500T, node3 i5-4590T, node4 i5-6500) and
+    # mongo >4.4 on x86_64 requires it.
+    image: mongo:7.0.40
+
+    dbName: unifi
+    # Where the users live and therefore what the controller authenticates
+    # against. The init script creates them in admin because clusterMonitor
+    # is an admin-database role and cannot be granted anywhere else.
+    authSource: admin
+
+    # WiredTiger's cache, in GB, set rather than inferred. Left alone it takes
+    # max(0.5 x (RAM - 1GB), 256MB); inside a 1Gi limit that arithmetic lands
+    # on the 256MB floor anyway, so pinning it costs nothing and removes the
+    # question of what happens when the limit changes.
+    wiredTigerCacheSizeGB: "0.25"
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+    persistence:
+      size: 8Gi
+      # longhorn, and specifically longhorn ReadWriteOnce. Longhorn serves RWX
+      # through an internal NFS share-manager, and WiredTiger on NFS corrupts.
+      # RWO is a plain replicated block device with ext4 on it, which is what
+      # a database wants. Do not copy the RWX claim from nodered here.
+      storageClass: longhorn
