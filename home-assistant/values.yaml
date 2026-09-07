@@ -43,16 +43,19 @@ home-assistant:
     enabled: true
     className: contour
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt
       ingress.kubernetes.io/force-ssl-redirect: "true"
-      kubernetes.io/tls-acme: "true"
+      # An Ingress secretName cannot carry a namespace, so contour is told
+      # where to read the delegated wildcard from with this instead. This chart
+      # also renders an HTTPProxy for the same fqdn; both point at the wildcard
+      # so it does not matter which contour ends up programming.
+      projectcontour.io/tls-cert-namespace: acme
     hosts:
       - host: home-assistant.88288338.xyz
         paths:
           - path: /
             pathType: ImplementationSpecific
     tls:
-      - secretName: certs-ingress
+      - secretName: wildcard-88288338-xyz
         hosts:
           - home-assistant.88288338.xyz
 

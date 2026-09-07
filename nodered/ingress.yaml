@@ -4,13 +4,16 @@ metadata:
   namespace: nodered
   name: nodered
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt
     ingress.kubernetes.io/force-ssl-redirect: "true"
-    kubernetes.io/tls-acme: "true"
+    # An Ingress secretName is validated as an RFC 1123 subdomain, so the
+    # "namespace/name" form an HTTPProxy takes is rejected by the apiserver
+    # before contour sees it. This annotation is how contour is told which
+    # namespace to read the delegated wildcard from.
+    projectcontour.io/tls-cert-namespace: acme
 spec:
   ingressClassName: contour
   tls:
-  - secretName: certs-ingress
+  - secretName: wildcard-88288338-xyz
     hosts:
     - nodered.88288338.xyz
   rules:

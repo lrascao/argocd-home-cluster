@@ -7,7 +7,10 @@ spec:
   virtualhost:
     fqdn: nodered.88288338.xyz
     tls:
-      secretName: certs-ingress
+      # The wildcard published by acme-cert-sync, reachable across namespaces
+      # through its TLSCertificateDelegation. Contour reads the secret itself,
+      # so no copy is needed here.
+      secretName: acme/wildcard-88288338-xyz
   routes:
     - services:
         - name: nodered
