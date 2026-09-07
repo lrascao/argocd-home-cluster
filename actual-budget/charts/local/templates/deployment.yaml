@@ -41,9 +41,6 @@ spec:
           mountPath: /data
         - name: config
           mountPath: /config
-        - name: tls
-          mountPath: /certs
-          readOnly: true
       volumes:
       - name: data
         persistentVolumeClaim:
@@ -51,9 +48,6 @@ spec:
       - name: config
         configMap:
           name: actual-budget-config
-      - name: tls
-        secret:
-          secretName: certs-actual-budget
 
 
 
