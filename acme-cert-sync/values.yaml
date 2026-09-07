@@ -31,3 +31,6 @@ local:
       - actual-budget
       - registry
       - monitoring
+      - nodered
+      - home-assistant
+      - daikin-system
