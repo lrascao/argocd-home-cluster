@@ -14,7 +14,7 @@ copy to Gmail.
 internet ──► MX mail.88288338.xyz (89.115.22.154)
              │
              ├─ :25  router DNAT rule 130 ─► VIP .40:9025 ─► haproxy ─► :30025 ─┐
-             └─ :587 router DNAT rule 131 ─► VIP .40:9587 ─► haproxy ─► :30587 ─┤
+             └─ :587 router DNAT rule 135 ─► VIP .40:9587 ─► haproxy ─► :30587 ─┤
                                                                                 ▼
                                                                           mailserver pod
                                                         ┌───────────────────────┴───────────────┐
