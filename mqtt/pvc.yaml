@@ -1,0 +1,25 @@
+# Backing store for mosquitto's retained messages. Deliberately small: this
+# holds the retained set, not history. Measured 2026-09-14, the whole retained
+# tree on this broker is 344 KiB across 77 messages, two thirds of which is the
+# single zigbee2mqtt/bridge/definitions blob -- that one grows with zigbee2mqtt
+# releases, not with the number of paired devices.
+#
+# Nothing else accumulates here: the persistence DB also stores queued QoS 1/2
+# messages for disconnected persistent sessions, but every client on this broker
+# connects with clean-session set and publishes at QoS 0, so there is no queue
+# to spill. 100Mi is ~290x the measured need and matches the zigbee2mqtt volume.
+#
+# storageClassName is left unset so this lands on longhorn, the default class.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: mqtt
+  name: mqtt-data
+  labels:
+    app: mqtt
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi

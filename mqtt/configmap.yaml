@@ -35,6 +35,32 @@ data:
     protocol websockets
 
     # =================================================================
+    # Persistence
+    # =================================================================
+    # Without these, retained messages and queued QoS 1/2 messages live only in
+    # the broker's memory. That is how the Daikin Altherma sensors were lost on
+    # 2026-09-08: mosquitto restarted, the retained store went with it, and the
+    # Home Assistant entities that had been created by retained MQTT discovery
+    # never came back.
+    #
+    # What survives a wipe is whatever gets republished. zigbee2mqtt republishes
+    # its discovery on every connect and recovered by itself. Node-RED's Daikin
+    # tab republishes daikin/sensor/state every 120s, so the values came back --
+    # but it publishes the discovery configs from a once:true inject five
+    # seconds after startup, which lost the race with its own broker connection
+    # and never landed. Retaining the store means that class of one-shot
+    # publisher does not have to get lucky.
+    #
+    # persistence_location must stay in step with the volume mounted in
+    # deployment.yaml; the pod sets fsGroup 1883 so the mosquitto user (which
+    # the broker drops to when started as root) can write there.
+    persistence true
+    persistence_location /mosquitto/data/
+    # Write the DB out periodically rather than only on a clean shutdown. The
+    # 2026-09-08 exit was code 255, which is not a clean shutdown.
+    autosave_interval 60
+
+    # =================================================================
     # Logging
     # =================================================================
     # Places to log to. Use multiple log_dest lines for multiple

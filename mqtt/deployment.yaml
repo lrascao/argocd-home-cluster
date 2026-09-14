@@ -7,6 +7,10 @@ metadata:
     app: mqtt
 spec:
   replicas: 1
+  # The data volume below is ReadWriteOnce, so a rolling update would deadlock:
+  # the new pod cannot attach the volume until the old one has let go of it.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: mqtt
@@ -15,6 +19,11 @@ spec:
       labels:
         app: mqtt
     spec:
+      # mosquitto is started as root and drops to the mosquitto user (1883) to
+      # run. Without this the freshly provisioned volume is root-owned and the
+      # broker cannot write its persistence DB into it.
+      securityContext:
+        fsGroup: 1883
       containers:
       - name: mqtt
         image: eclipse-mosquitto:2
@@ -27,6 +36,8 @@ spec:
          - name: conf-mqtt
            mountPath: "/mosquitto/config"
            readOnly: true
+         - name: data-mqtt
+           mountPath: "/mosquitto/data"
       volumes:
       - name: certs-mqtt
         secret:
@@ -34,3 +45,6 @@ spec:
       - name: conf-mqtt
         configMap:
           name: mqtt
+      - name: data-mqtt
+        persistentVolumeClaim:
+          claimName: mqtt-data
