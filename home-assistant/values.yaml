@@ -64,3 +64,151 @@ home-assistant:
     forceInit: true
     trusted_proxies:
       - 10.0.0.0/8
+
+    # The six Altherma sensors exist only as *retained* MQTT discovery messages
+    # published by Node-RED (flow tab "Daikin"). That tab has two branches:
+    #
+    #   * an inject with repeat:120 -> GET daikin:8080/metrics -> parse the
+    #     prometheus gauges -> publish daikin/sensor/state, retained
+    #   * an inject with once:true, onceDelay:5 -> build the six
+    #     homeassistant/sensor/daikin_*/config discovery payloads -> publish,
+    #     retained
+    #
+    # mosquitto runs with persistence off, so when it restarted on 2026-09-08
+    # the entire retained store went with it. The first branch repeats, so
+    # daikin/sensor/state was back within two minutes. The second fires once,
+    # five seconds after Node-RED starts, and Node-RED's mqtt-out drops
+    # messages published before its broker connection is up -- so the discovery
+    # configs were never re-published at all (zero of them in the broker log
+    # since). Home Assistant restarted into a broker with no discovery configs
+    # and orphaned all six entities: permanently `unavailable`, while perfectly
+    # good values kept arriving on a topic nothing subscribed to.
+    #
+    # Declaring the sensors here takes them off that path entirely. They no
+    # longer depend on the retained store surviving, nor on a five-second race
+    # at Node-RED startup winning. The unique_ids below are the ones already in
+    # the entity registry, so Home Assistant reattaches these to the existing
+    # entities and their history instead of creating duplicates; the `device`
+    # identifier likewise re-uses the existing "Daikin Altherma" device.
+    #
+    # NOTE: this makes Node-RED's discovery branch redundant, and the two now
+    # claim the same unique_ids. Nothing breaks today -- that branch has not
+    # published successfully since 2026-09-08 -- but on the next Node-RED
+    # restart where it does win the race, Home Assistant will reject whichever
+    # definition loses and log a duplicate-unique_id error. Disable the
+    # "HA discovery configs" branch on the Daikin tab so there is one source of
+    # truth. (Node-RED's flows live on its PVC, not in this repo.)
+    #
+    # The doubled braces are escaping, not a typo: the chart runs templateConfig
+    # through Go's `tpl`, which would otherwise eat the Jinja2 value_templates.
+    # `{{ `x` }}` renders as a literal x.
+    #
+    # expire_after is new. Without it a sensor shows its last value forever once
+    # the publisher stops, which is what made this outage hard to place: the
+    # dashboard was an hour stale before a restart finally blanked it. The
+    # publisher's interval is 120s, so 900 is ~7 missed updates -- late enough
+    # not to flap, early enough to notice the same morning.
+    templateConfig: |-
+      # Loads default set of integrations. Do not remove.
+      default_config:
+
+      {{- if .Values.serviceMonitor.enabled }}
+      prometheus:
+      {{- end }}
+
+      {{- if or .Values.ingress.enabled .Values.ingress.external .Values.httpRoute.enabled }}
+      http:
+        use_x_forwarded_for: true
+        trusted_proxies:
+          {{- range .Values.configuration.trusted_proxies }}
+          - {{ . }}
+          {{- end }}
+      {{- end}}
+      # Load frontend themes from the themes folder
+      frontend:
+        themes: !include_dir_merge_named themes
+
+      automation: !include automations.yaml
+      script: !include scripts.yaml
+      scene: !include scenes.yaml
+
+      mqtt:
+        sensor:
+          - name: "Outdoor temperature"
+            unique_id: daikin_altherma_outdoor
+            state_topic: "daikin/sensor/state"
+            value_template: "{{ `{{ value_json.outdoor }}` }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°C"
+            expire_after: 900
+            device:
+              identifiers:
+                - daikin_altherma
+              name: "Daikin Altherma"
+              manufacturer: "Daikin"
+          - name: "Room temperature"
+            unique_id: daikin_altherma_room
+            state_topic: "daikin/sensor/state"
+            value_template: "{{ `{{ value_json.room }}` }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°C"
+            expire_after: 900
+            device:
+              identifiers:
+                - daikin_altherma
+              name: "Daikin Altherma"
+              manufacturer: "Daikin"
+          - name: "Leaving water temperature"
+            unique_id: daikin_altherma_leaving_water
+            state_topic: "daikin/sensor/state"
+            value_template: "{{ `{{ value_json.leaving_water }}` }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°C"
+            expire_after: 900
+            device:
+              identifiers:
+                - daikin_altherma
+              name: "Daikin Altherma"
+              manufacturer: "Daikin"
+          - name: "Tank temperature"
+            unique_id: daikin_altherma_tank
+            state_topic: "daikin/sensor/state"
+            value_template: "{{ `{{ value_json.tank }}` }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°C"
+            expire_after: 900
+            device:
+              identifiers:
+                - daikin_altherma
+              name: "Daikin Altherma"
+              manufacturer: "Daikin"
+          - name: "Desired tank temperature"
+            unique_id: daikin_altherma_desired_tank
+            state_topic: "daikin/sensor/state"
+            value_template: "{{ `{{ value_json.desired_tank }}` }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°C"
+            expire_after: 900
+            device:
+              identifiers:
+                - daikin_altherma
+              name: "Daikin Altherma"
+              manufacturer: "Daikin"
+          - name: "Desired room temperature"
+            unique_id: daikin_altherma_desired_room
+            state_topic: "daikin/sensor/state"
+            value_template: "{{ `{{ value_json.desired_room }}` }}"
+            device_class: temperature
+            state_class: measurement
+            unit_of_measurement: "°C"
+            expire_after: 900
+            device:
+              identifiers:
+                - daikin_altherma
+              name: "Daikin Altherma"
+              manufacturer: "Daikin"
