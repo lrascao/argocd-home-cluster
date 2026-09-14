@@ -23,7 +23,11 @@ data:
   # Combined with ENABLE_SRS=1, the forwarded copy leaves with an SRS-rewritten
   # envelope sender, so it passes SPF at Google instead of being spam-filed
   # for forging the original sender's domain.
-  luis@88288338.xyz.dovecot.sieve: |
+  # Key is `dovecot.sieve`, NOT `luis@88288338.xyz.dovecot.sieve`: a ConfigMap
+  # key must match [-._a-zA-Z0-9]+ and `@` is rejected by the API server. The
+  # real filename DMS expects is restored by the volume item path in
+  # deployment.yaml, which is a file path and has no such restriction.
+  dovecot.sieve: |
     require ["copy"];
     redirect :copy "luis.rascao+88288338.xyz@gmail.com";
 

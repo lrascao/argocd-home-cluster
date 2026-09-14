@@ -205,6 +205,14 @@ spec:
           sources:
           - configMap:
               name: mailserver-config
+              items:
+              - key: postfix-virtual.cf
+                path: postfix-virtual.cf
+              - key: postfix-main.cf
+                path: postfix-main.cf
+              # restores the '@' the ConfigMap key could not carry
+              - key: dovecot.sieve
+                path: luis@88288338.xyz.dovecot.sieve
           - secret:
               name: mailserver-accounts
           - secret:
