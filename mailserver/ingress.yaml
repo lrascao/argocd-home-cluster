@@ -1,0 +1,24 @@
+# This Ingress exists ONLY to make cert-manager issue a Let's Encrypt cert for
+# mail.88288338.xyz into the `mailserver-tls` secret -- there is no HTTP
+# backend behind it. Same trick the old mailforwarder app used.
+#
+# Caveat: cert-manager renews the secret in place, but DMS reads the cert at
+# startup and will keep serving the old one until the pod restarts. Renewal is
+# ~every 60 days; either restart the pod after a renewal or add a reloader.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mailserver
+  namespace: mailserver
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    ingress.kubernetes.io/force-ssl-redirect: "true"
+    kubernetes.io/tls-acme: "true"
+spec:
+  ingressClassName: contour
+  tls:
+  - secretName: mailserver-tls
+    hosts:
+    - mail.88288338.xyz
+  rules:
+  - host: mail.88288338.xyz

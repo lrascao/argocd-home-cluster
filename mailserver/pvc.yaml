@@ -1,0 +1,18 @@
+# Mail data: mailboxes (/var/mail), postfix/dovecot state (/var/mail-state)
+# and logs (/var/log/mail), separated by subPath in the Deployment.
+#
+# RWO on purpose -- exactly one DMS pod may own this at a time. Sizing: the
+# cluster has ~115GiB usable at 3 replicas, so 10Gi is comfortable and can be
+# expanded in place (the longhorn StorageClass has allowVolumeExpansion=true).
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: mailserver-data
+  namespace: mailserver
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

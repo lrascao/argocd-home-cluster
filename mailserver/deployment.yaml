@@ -1,0 +1,220 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailserver
+  namespace: mailserver
+  labels:
+    app: mailserver
+spec:
+  replicas: 1
+  # Mail data is RWO -- never run two pods against it. Recreate, not rolling.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mailserver
+  template:
+    metadata:
+      labels:
+        app: mailserver
+    spec:
+      hostname: mail
+      # DMS assembles its runtime config from /tmp/docker-mailserver and needs
+      # that directory WRITABLE. Everything declarative is copied in here first.
+      initContainers:
+      - name: seed-config
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          cp -rL /config-src/. /config/
+          # opendkim refuses a world-readable private key
+          if [ -f /config/opendkim/keys/88288338.xyz/mail.private ]; then
+            chmod 600 /config/opendkim/keys/88288338.xyz/mail.private
+          fi
+          [ -f /config/postfix-accounts.cf ] && chmod 600 /config/postfix-accounts.cf
+          ls -laR /config
+        volumeMounts:
+        - name: config-src
+          mountPath: /config-src
+          readOnly: true
+        - name: config
+          mountPath: /config
+      containers:
+      - name: mailserver
+        # Pinned deliberately to the settled release rather than the newest.
+        # v16.0.0 landed 2026-08-30 and needed v16.0.1 five days later; v15.1.0
+        # has had a year in the field. Revisit once v16 has a few quiet months.
+        image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
+        env:
+        - name: OVERRIDE_HOSTNAME
+          value: mail.88288338.xyz
+        - name: POSTMASTER_ADDRESS
+          value: luis@88288338.xyz
+        - name: LOG_LEVEL
+          value: info
+        # Pods on this cluster are IPv4-only (flannel 10.200.0.0/16, no global
+        # v6 address). Postfix and dovecot default to `all` and will throw
+        # errors trying to bind/resolve over IPv6 if left alone.
+        - name: POSTFIX_INET_PROTOCOLS
+          value: ipv4
+        - name: DOVECOT_INET_PROTOCOLS
+          value: ipv4
+        # Log timestamps in local time, to line up with the node-side timers.
+        - name: TZ
+          value: Europe/Lisbon
+
+        # --- TLS: the cert-manager-issued cert, same trick as the old app ---
+        - name: SSL_TYPE
+          value: manual
+        - name: SSL_CERT_PATH
+          value: /secrets/ssl/tls.crt
+        - name: SSL_KEY_PATH
+          value: /secrets/ssl/tls.key
+
+        # --- Outbound: Brevo smarthost. NOT optional -- the WAN IP's PTR is
+        # 154.22.115.89.rev.vodafone.pt, a generic consumer reverse DNS on a
+        # range that is on Spamhaus PBL by default. Direct delivery from here
+        # will be rejected by most receivers, permanently. ---
+        - name: RELAY_HOST
+          value: smtp-relay.brevo.com
+        - name: RELAY_PORT
+          value: "587"
+
+        # --- SRS: rewrites the envelope sender on forwarded mail so the copy
+        # sent to Gmail passes SPF. Without this, every forwarded message is
+        # a domain forgery from Google's point of view. ---
+        - name: ENABLE_SRS
+          value: "1"
+
+        # --- DKIM signing via OpenDKIM (key supplied by the mailserver-dkim
+        # secret). Do not also enable rspamd's signer -- one signer only. ---
+        - name: ENABLE_OPENDKIM
+          value: "1"
+        - name: ENABLE_OPENDMARC
+          value: "1"
+
+        # --- Deliberately off for phase 1 ---
+        # rspamd/ClamAV: Gmail is already the spam filter for everything that
+        # gets forwarded, so this buys little and costs ~1GB RAM. Revisit if
+        # you start reading mail primarily over IMAP instead of in Gmail.
+        - name: ENABLE_RSPAMD
+          value: "0"
+        - name: ENABLE_CLAMAV
+          value: "0"
+        # fail2ban is POINTLESS until PROXY protocol is on: every connection
+        # currently arrives SNAT'd from a flannel gateway, so banning "the
+        # client" would ban a quarter of the internet at once. Turn on in
+        # phase 2, together with the PROXY protocol change.
+        - name: ENABLE_FAIL2BAN
+          value: "0"
+
+        - name: SPOOF_PROTECTION
+          value: "1"
+        - name: PERMIT_DOCKER
+          value: none
+        - name: ENABLE_POP3
+          value: "0"
+
+        # RELAY_USER, RELAY_PASSWORD, SRS_SECRET -- see README.md
+        envFrom:
+        - secretRef:
+            name: mailserver-secrets
+
+        ports:
+        - name: smtp
+          containerPort: 25
+        - name: submission
+          containerPort: 587
+        - name: imaps
+          containerPort: 993
+
+        volumeMounts:
+        - name: data
+          mountPath: /var/mail
+          subPath: mail
+        - name: data
+          mountPath: /var/mail-state
+          subPath: state
+        - name: data
+          mountPath: /var/log/mail
+          subPath: log
+        - name: config
+          mountPath: /tmp/docker-mailserver
+        - name: ssl
+          mountPath: /secrets/ssl
+          readOnly: true
+
+        securityContext:
+          # DMS must run as root: it drops privileges itself, and postdrop
+          # needs SGID.
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: true
+          capabilities:
+            drop: ["ALL"]
+            add:
+            - CHOWN
+            - FOWNER
+            - MKNOD
+            - SETGID
+            - SETUID
+            - DAC_OVERRIDE
+            - NET_BIND_SERVICE
+            - SYS_CHROOT
+            - KILL
+            # NET_ADMIN + NET_RAW are only needed once ENABLE_FAIL2BAN=1.
+
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 2Gi
+            cpu: "2"
+
+        # The old forwarder had NO probes: if postfix died while the
+        # supervisor kept the container up, nothing noticed and all four
+        # haproxy backends went dark together.
+        startupProbe:
+          tcpSocket: { port: 25 }
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket: { port: 25 }
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket: { port: 25 }
+          periodSeconds: 10
+
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mailserver-data
+      - name: config
+        emptyDir: {}
+      - name: ssl
+        secret:
+          secretName: mailserver-tls
+      - name: config-src
+        projected:
+          sources:
+          - configMap:
+              name: mailserver-config
+          - secret:
+              name: mailserver-accounts
+          - secret:
+              name: mailserver-dkim
+              items:
+              - key: mail.private
+                path: opendkim/keys/88288338.xyz/mail.private
+              - key: KeyTable
+                path: opendkim/KeyTable
+              - key: SigningTable
+                path: opendkim/SigningTable
+              - key: TrustedHosts
+                path: opendkim/TrustedHosts

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailserver
+  namespace: mailserver
+  labels:
+    app: mailserver
+spec:
+  type: NodePort
+  # externalTrafficPolicy stays Cluster ON PURPOSE. `Local` would NOT recover
+  # the real client IP here: haproxy terminates the inbound connection on the
+  # VIP and opens a fresh one to the NodePort, so postfix sees haproxy either
+  # way. PROXY protocol (phase 2) is the only thing that carries the origin IP
+  # through this stack.
+  externalTrafficPolicy: Cluster
+  ports:
+  # Inbound MX. NOTE: the old mailforwarder Service holds this nodePort until
+  # its NAMESPACE is deleted -- deleting the ArgoCD Application alone does not
+  # release it (no finalizers, so the delete does not cascade). See README.md.
+  - name: smtp
+    nodePort: 30025
+    port: 25
+    protocol: TCP
+    targetPort: 25
+  # Submission. Reached from the internet so Gmail's "Send mail as" can
+  # authenticate and submit through this server (which is what makes replies
+  # DKIM-signed by your domain and DMARC-aligned).
+  - name: submission
+    nodePort: 30587
+    port: 587
+    protocol: TCP
+    targetPort: 587
+  # IMAPS. Deliberately NOT given a router DNAT rule -- reachable on the LAN
+  # and over WireGuard/Tailscale only. Gmail never needs it, because mail
+  # reaches Gmail by forwarding rather than by POP3 fetch.
+  - name: imaps
+    nodePort: 30993
+    port: 993
+    protocol: TCP
+    targetPort: 993
+  selector:
+    app: mailserver

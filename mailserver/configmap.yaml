@@ -1,0 +1,48 @@
+# Non-secret DMS config. These land in /tmp/docker-mailserver/ via the
+# init container (see deployment.yaml) -- NOT mounted read-only directly,
+# because DMS chowns/chmods that directory on startup and a read-only
+# mount makes it fail. That is exactly how the old `mailforwarder` broke
+# its DKIM setup: the key directory was a read-only ConfigMap, key
+# generation failed against it, and opendkim ran for two years with no key.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mailserver-config
+  namespace: mailserver
+data:
+  # Catch-all: anything @88288338.xyz lands in the one real mailbox.
+  # Keeps the behaviour the old forwarder had (SMF_CONFIG was a catch-all),
+  # so per-service addresses like amazon@88288338.xyz keep working.
+  postfix-virtual.cf: |
+    @88288338.xyz luis@88288338.xyz
+
+  # Deliver locally AND forward a copy to Gmail. `:copy` is the important
+  # part -- without it, redirect forwards and does NOT keep a local copy,
+  # which would leave you with no mailbox on your own server.
+  #
+  # Combined with ENABLE_SRS=1, the forwarded copy leaves with an SRS-rewritten
+  # envelope sender, so it passes SPF at Google instead of being spam-filed
+  # for forging the original sender's domain.
+  luis@88288338.xyz.dovecot.sieve: |
+    require ["copy"];
+    redirect :copy "luis.rascao+88288338.xyz@gmail.com";
+
+  # Appended to postfix main.cf.
+  postfix-main.cf: |
+    # Match the size limit the old forwarder advertised (40MB).
+    message_size_limit = 40960000
+    # Gmail is the spam filter for anything that gets forwarded, but reject
+    # the obvious garbage at the door so it never hits the queue.
+    smtpd_helo_required = yes
+
+# PHASE 2 -- PROXY protocol. Deliberately NOT shipped as a data key yet.
+# DMS passes EVERY line of postfix-master.cf to `postconf -P`, and the docs do
+# not promise that `#` lines are skipped -- a comment-only file risks being
+# fed to postconf as a parameter name. Add the key with real content only when
+# you turn this on, in the SAME commit as `send-proxy` in haproxy.cfg.j2:
+#
+#   postfix-master.cf: |
+#     smtp/inet/smtpd_upstream_proxy_protocol=haproxy
+#     submission/inet/smtpd_upstream_proxy_protocol=haproxy
+#
+# Either side alone breaks the listener completely.
