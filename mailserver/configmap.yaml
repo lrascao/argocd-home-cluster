@@ -54,6 +54,24 @@ data:
     # the obvious garbage at the door so it never hits the queue.
     smtpd_helo_required = yes
 
+    # Throttle password guessing on :587. Only meaningful now that PROXY
+    # protocol gives anvil a real per-client address -- before that every
+    # client shared one flannel-gateway IP and this would have been a single
+    # shared bucket for the whole internet.
+    #
+    # AUTH rate only, deliberately: haproxy health-checks each node roughly
+    # 30x/minute, so a connection-rate limit would throttle our own backends.
+    # Health checks never authenticate, so they cannot trip this one. A real
+    # client authenticates once per send; the brute-force traffic here does
+    # far more than ten attempts a minute.
+    #
+    # Note this throttles, it does not block -- a ban has to happen in haproxy,
+    # which sees the true source at the network layer. fail2ban inside the pod
+    # cannot work: the PROXY header is an application-layer declaration, so
+    # packets still physically arrive from 10.200.x.x and an nftables rule on
+    # the attacker's real address would match nothing.
+    smtpd_client_auth_rate_limit = 10
+
   # PROXY protocol. Must be flipped in the SAME commit as `send-proxy` on the
   # haproxy backends -- either side alone breaks the listener outright.
   #
