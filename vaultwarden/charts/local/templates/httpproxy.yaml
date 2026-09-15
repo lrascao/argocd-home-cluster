@@ -1,0 +1,36 @@
+apiVersion: projectcontour.io/v1
+kind: HTTPProxy
+metadata:
+  name: vaultwarden
+  namespace: {{ .Values.namespace }}
+spec:
+  virtualhost:
+    fqdn: {{ .Values.fqdn }}
+    tls:
+      # The wildcard published by acme-cert-sync, reached across namespaces
+      # through its TLSCertificateDelegation -- which means this namespace has
+      # to be listed in acme-cert-sync/values.yaml targetNamespaces or contour
+      # refuses to program the vhost at all.
+      secretName: acme/wildcard-88288338-xyz
+  routes:
+    # Live sync. The clients hold a websocket open here so an item saved on
+    # the laptop shows up on the phone without a manual pull; since 1.30
+    # vaultwarden serves it on the main port instead of the old 3012, so this
+    # is a route condition rather than a second service.
+    - conditions:
+      - prefix: /notifications/hub
+      enableWebsockets: true
+      # Contour sets no route timeout of its own, so envoy's 15s default
+      # applies and would cut the socket every fifteen seconds; the clients
+      # would reconnect forever and sync would look mysteriously laggy rather
+      # than broken. The 5m connection-manager idle timeout needs lifting for
+      # the same reason.
+      timeoutPolicy:
+        response: infinity
+        idle: infinity
+      services:
+      - name: vaultwarden
+        port: 80
+    - services:
+      - name: vaultwarden
+        port: 80

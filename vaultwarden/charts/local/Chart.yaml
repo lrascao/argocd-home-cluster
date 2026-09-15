@@ -1,0 +1,4 @@
+apiVersion: v1
+description: Self-hosted Bitwarden-compatible vault
+name: local
+version: 0.0.1

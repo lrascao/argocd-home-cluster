@@ -1,0 +1,68 @@
+local:
+  namespace: vaultwarden
+
+  # Public name. Also DOMAIN inside vaultwarden, which is not cosmetic: the
+  # invite, emergency-access and email-verification links are built from it,
+  # and it becomes the WebAuthn relying-party ID. Get it wrong and you get
+  # mail nobody can action and security keys that refuse to register.
+  #
+  # The wildcard *.88288338.xyz already resolves this to the public address,
+  # so it is reachable from outside the house the moment it is deployed. To
+  # keep it on the LAN instead, add an explicit record the way `actual` and
+  # `registry` have one -- nothing in this chart needs to change for that.
+  fqdn: vault.88288338.xyz
+
+  # Pinned, not :latest. Vaultwarden implements the Bitwarden API and has to
+  # keep up with the clients: 1.37.0 is what added compatibility with client
+  # 2026.7.0. The phone app updates itself from the App Store and will happily
+  # outrun a server left behind, so this is a dependency that has to be walked
+  # forward deliberately rather than drifting on its own.
+  image: vaultwarden/server:1.37.3-alpine
+
+  storage:
+    # The vault itself is tiny -- a few MB of SQLite. The headroom is for
+    # attachments and the icon cache.
+    size: 1Gi
+
+  signups:
+    # There is no bootstrap account and no admin panel below, so creating the
+    # first account means committing `true` here, registering, then committing
+    # `false` again. Two commits, and in between the registration page is open
+    # to anyone who finds the name -- so do not leave it sitting open.
+    allowed: false
+    # Optional comma-separated list, e.g. "88288338.xyz". Narrows who may
+    # register while `allowed` is true; ignored when it is false.
+    domainsWhitelist: ""
+
+  admin:
+    # The /admin panel is off by default, which is the upstream hardening
+    # advice: most instances need it once to configure SMTP and then never
+    # again, and this chart configures SMTP from the environment instead. It
+    # is a password-only door on a public name, so it stays shut.
+    #
+    # Turning it on requires an ADMIN_TOKEN in the sealed secret below, as an
+    # Argon2 PHC string rather than plaintext (`vaultwarden hash`).
+    enabled: false
+
+  smtp:
+    # Not strictly required -- the vault, sync, TOTP/WebAuthn 2FA and Send all
+    # work without it. What needs mail is inviting people, emergency access,
+    # and the verification code vaultwarden asks for when you change your
+    # account email (it prompts for that code whether or not it can send it,
+    # which is a good way to lock yourself out of your own email change).
+    enabled: true
+
+    # Brevo directly, which is where mail from this domain ends up either way:
+    # the WAN address has generic Vodafone rDNS on a PBL-listed range, so
+    # nothing here delivers on its own. Relaying through the `mailserver` app
+    # instead would keep the Brevo key in one place and sign this mail with the
+    # domain's own DKIM -- see README.md for why that is not the default.
+    host: smtp-relay.brevo.com
+    port: 587
+    security: starttls
+    from: vault@88288338.xyz
+    fromName: Vaultwarden
+
+  # Credentials, referenced by both the smtp and admin blocks above. Not in
+  # this repo in the clear -- see the SealedSecret note in the templates.
+  secretName: vaultwarden

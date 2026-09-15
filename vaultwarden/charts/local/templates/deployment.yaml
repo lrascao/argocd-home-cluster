@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vaultwarden
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: vaultwarden
+spec:
+  replicas: 1
+  # The volume is ReadWriteOnce and SQLite wants exactly one writer, so the
+  # default RollingUpdate deadlocks: the new pod cannot attach the volume
+  # until the old one releases it, and the old one is not torn down until the
+  # new one is ready. Recreate buys a few seconds of downtime instead of a
+  # stuck rollout -- and the clients hold an offline copy of the vault, so
+  # those seconds cost a sync, not access to passwords.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vaultwarden
+  template:
+    metadata:
+      labels:
+        app: vaultwarden
+    spec:
+      securityContext:
+        # Longhorn chowns the volume to this group on attach, which is the
+        # only reason the non-root user below can write to /data at all.
+        fsGroup: 1000
+      containers:
+      - name: vaultwarden
+        image: {{ .Values.image }}
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: DOMAIN
+          value: https://{{ .Values.fqdn }}
+        # The image defaults rocket to port 80, which a non-root user cannot
+        # bind. Moving it above 1024 is what makes the securityContext below
+        # possible.
+        - name: ROCKET_PORT
+          value: "8080"
+        - name: DATA_FOLDER
+          value: /data
+        - name: SIGNUPS_ALLOWED
+          value: {{ .Values.signups.allowed | quote }}
+        {{- if .Values.signups.domainsWhitelist }}
+        - name: SIGNUPS_DOMAINS_WHITELIST
+          value: {{ .Values.signups.domainsWhitelist | quote }}
+        {{- end }}
+        # Envoy fronts this and sets X-Forwarded-For; vaultwarden's own
+        # default is X-Real-IP, which contour does not set, so without this
+        # every failed-login line in the log reads as the envoy pod's address.
+        # The contour-envoy service runs externalTrafficPolicy: Local, so the
+        # real client address survives the NodePort hop and is worth logging.
+        - name: IP_HEADER
+          value: X-Forwarded-For
+        # Which hops may be believed when reading that header. The pod CIDR
+        # covers envoy and nothing outside the cluster, so a forged
+        # X-Forwarded-For arriving from the internet is not trusted.
+        - name: IP_HEADER_TRUSTED_PROXIES
+          value: 10.200.0.0/16
+        # Vaultwarden's own login throttle. Worth setting explicitly because
+        # it is the only thing in front of this door: contour has a ratelimit
+        # service deployed but no ExtensionService wiring it up, so nothing at
+        # the ingress is counting attempts. 10 requests a minute covers the
+        # password and the 2FA step of a normal login with room to fumble.
+        - name: LOGIN_RATELIMIT_SECONDS
+          value: "60"
+        - name: LOGIN_RATELIMIT_MAX_BURST
+          value: "10"
+        {{- if .Values.admin.enabled }}
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secretName }}
+              key: admin-token
+        - name: ADMIN_RATELIMIT_SECONDS
+          value: "300"
+        - name: ADMIN_RATELIMIT_MAX_BURST
+          value: "3"
+        {{- end }}
+        {{- if .Values.smtp.enabled }}
+        - name: SMTP_HOST
+          value: {{ .Values.smtp.host | quote }}
+        - name: SMTP_PORT
+          value: {{ .Values.smtp.port | quote }}
+        - name: SMTP_SECURITY
+          value: {{ .Values.smtp.security | quote }}
+        - name: SMTP_FROM
+          value: {{ .Values.smtp.from | quote }}
+        - name: SMTP_FROM_NAME
+          value: {{ .Values.smtp.fromName | quote }}
+        - name: SMTP_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secretName }}
+              key: smtp-username
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secretName }}
+              key: smtp-password
+        # Makes registration send a confirmation mail. Only meaningful while
+        # signups.allowed is true, and only works because mail is configured.
+        - name: SIGNUPS_VERIFY
+          value: "true"
+        {{- end }}
+        # /api/alive takes a database connection, so this is not just "is
+        # rocket listening" -- an instance whose SQLite handle has gone bad
+        # fails the probe instead of quietly serving errors to the clients.
+        livenessProbe:
+          httpGet:
+            path: /api/alive
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/alive
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          # Everything vaultwarden writes lives under DATA_FOLDER, with /tmp
+          # mounted below for rocket's request scratch space. If the pod ever
+          # fails to start after a version bump, this is the first thing to
+          # relax -- upstream does not test against a read-only root.
+          readOnlyRootFilesystem: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            # No CPU limit: this idles at nearly nothing and the only moments
+            # it wants CPU are the KDF on login and an attachment upload,
+            # neither of which is worth throttling.
+            memory: 256Mi
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pvc-vaultwarden
+      - name: tmp
+        emptyDir: {}

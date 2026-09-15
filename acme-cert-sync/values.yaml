@@ -34,3 +34,4 @@ local:
       - nodered
       - home-assistant
       - daikin-system
+      - vaultwarden

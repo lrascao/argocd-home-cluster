@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-vaultwarden
+  namespace: {{ .Values.namespace }}
+spec:
+  storageClassName: longhorn
+  # ReadWriteOnce, against the ReadWriteMany used by most of the charts here.
+  # Longhorn serves RWX by standing up an NFS share-manager in front of the
+  # volume, and this is a SQLite database: POSIX locking over NFS is exactly
+  # the arrangement SQLite's own documentation warns produces corruption. One
+  # writer, one node, no NFS.
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}
