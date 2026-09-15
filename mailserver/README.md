@@ -135,7 +135,12 @@ openssl genrsa -out mail.private 2048
 openssl rsa -in mail.private -pubout -outform PEM \
   | grep -v '^-----' | tr -d '\n' > mail.pub
 
-printf 'mail._domainkey.88288338.xyz 88288338.xyz:mail:/tmp/docker-mailserver/opendkim/keys/88288338.xyz/mail.private\n' > KeyTable
+# NOTE the path: /etc/opendkim/keys, NOT /tmp/docker-mailserver/opendkim/keys.
+# DMS copies supplied keys from the config volume into /etc/opendkim/keys with
+# the right ownership, but copies KeyTable through verbatim. Point it at /tmp
+# and opendkim refuses the key -- "key data is not secure: /tmp can be read or
+# written by other users" -- then tempfails every message.
+printf 'mail._domainkey.88288338.xyz 88288338.xyz:mail:/etc/opendkim/keys/88288338.xyz/mail.private\n' > KeyTable
 printf '*@88288338.xyz mail._domainkey.88288338.xyz\n' > SigningTable
 printf '127.0.0.1\nlocalhost\n88288338.xyz\n' > TrustedHosts
 
