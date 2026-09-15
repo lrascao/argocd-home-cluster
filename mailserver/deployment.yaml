@@ -112,6 +112,21 @@ spec:
         - name: ENABLE_FAIL2BAN
           value: "0"
 
+        # policyd-spf is OFF, and must stay off until PROXY protocol lands.
+        # It checks the sender's SPF record against the CONNECTING ip -- which
+        # here is always a flannel gateway (10.200.x.x), because the NodePort
+        # SNATs every inbound connection. That address is in nobody's SPF
+        # record, so the check cannot ever pass: every sender domain publishing
+        # `-all` (hotmail, outlook, and most well-run domains) gets a permanent
+        # 550 and the sender receives a bounce. Gmail's `~all` was the only
+        # reason anything got through at all.
+        #
+        # A check that can only produce wrong answers is worse than no check;
+        # Gmail does the real filtering on the forwarded copy anyway. Re-enable
+        # ONLY after PROXY protocol restores real client IPs -- at which point
+        # it becomes correct and worth having.
+        - name: ENABLE_POLICYD_SPF
+          value: "0"
         - name: SPOOF_PROTECTION
           value: "1"
         - name: PERMIT_DOCKER
