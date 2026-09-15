@@ -31,6 +31,21 @@ data:
     require ["copy"];
     redirect :copy "luis.rascao+88288338.xyz@gmail.com";
 
+  # DMS runs this as root late in startup -- its documented extension point.
+  # The DKIM key arrives from a Secret owned by root:root 0600, but opendkim
+  # drops to the `opendkim` user and then cannot read its own key. It does not
+  # fail open: it returns a tempfail to postfix, and EVERY message -- inbound
+  # included -- gets deferred with `milter-reject ... 4.7.1`.
+  #
+  # Resolving the user by NAME here rather than by uid in the init container,
+  # because the numeric id (102:104 today) is an implementation detail of the
+  # image and would rot silently on a version bump.
+  user-patches.sh: |
+    #!/bin/bash
+    chown -R opendkim:opendkim /tmp/docker-mailserver/opendkim
+    chmod 700 /tmp/docker-mailserver/opendkim/keys/88288338.xyz
+    chmod 600 /tmp/docker-mailserver/opendkim/keys/88288338.xyz/mail.private
+
   # Appended to postfix main.cf.
   postfix-main.cf: |
     # Match the size limit the old forwarder advertised (40MB).

@@ -35,6 +35,7 @@ spec:
             chmod 600 /config/opendkim/keys/88288338.xyz/mail.private
           fi
           [ -f /config/postfix-accounts.cf ] && chmod 600 /config/postfix-accounts.cf
+          [ -f /config/user-patches.sh ] && chmod 755 /config/user-patches.sh
           ls -laR /config
         volumeMounts:
         - name: config-src
@@ -213,6 +214,8 @@ spec:
               # restores the '@' the ConfigMap key could not carry
               - key: dovecot.sieve
                 path: luis@88288338.xyz.dovecot.sieve
+              - key: user-patches.sh
+                path: user-patches.sh
           - secret:
               name: mailserver-accounts
           - secret:
