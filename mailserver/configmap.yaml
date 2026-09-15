@@ -54,14 +54,15 @@ data:
     # the obvious garbage at the door so it never hits the queue.
     smtpd_helo_required = yes
 
-# PHASE 2 -- PROXY protocol. Deliberately NOT shipped as a data key yet.
-# DMS passes EVERY line of postfix-master.cf to `postconf -P`, and the docs do
-# not promise that `#` lines are skipped -- a comment-only file risks being
-# fed to postconf as a parameter name. Add the key with real content only when
-# you turn this on, in the SAME commit as `send-proxy` in haproxy.cfg.j2:
-#
-#   postfix-master.cf: |
-#     smtp/inet/smtpd_upstream_proxy_protocol=haproxy
-#     submission/inet/smtpd_upstream_proxy_protocol=haproxy
-#
-# Either side alone breaks the listener completely.
+  # PROXY protocol. Must be flipped in the SAME commit as `send-proxy` on the
+  # haproxy backends -- either side alone breaks the listener outright.
+  #
+  # NOTE the two different parameter names. :25 is served by POSTSCREEN
+  # (master.cf: `smtp inet ... postscreen`), so it takes
+  # postscreen_upstream_proxy_protocol; :587 is served by smtpd directly and
+  # takes smtpd_upstream_proxy_protocol. Using the smtpd_ name on :25 is
+  # accepted silently and does nothing.
+  postfix-master.cf: |
+    smtp/inet/postscreen_upstream_proxy_protocol=haproxy
+    submission/inet/smtpd_upstream_proxy_protocol=haproxy
+
