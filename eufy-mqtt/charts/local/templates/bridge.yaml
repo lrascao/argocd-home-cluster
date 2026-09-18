@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-eufy-bridge
+  namespace: {{ .Values.namespace }}
+spec:
+  storageClassName: longhorn
+  # ReadWriteOnce: one bridge, one writer, and the volume holds a cloud
+  # session that two replicas would corrupt by racing each other for it.
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: {{ .Values.bridge.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eufy-bridge
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: eufy-bridge
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. Two things want it: the PVC is ReadWriteOnce
+  # so a rolling pod cannot attach until the old one lets go, and the eufy
+  # account allows exactly one active session -- overlapping pods would kick
+  # each other's login in a loop.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: eufy-bridge
+  template:
+    metadata:
+      labels:
+        app: eufy-bridge
+    spec:
+      containers:
+      - name: bridge
+        image: {{ .Values.bridge.image }}
+        ports:
+        - name: ws
+          containerPort: 3000
+        - name: rtsp
+          containerPort: 8554
+        env:
+        - name: EUFY_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secretName }}
+              key: email
+        - name: EUFY_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secretName }}
+              key: password
+        - name: EUFY_COUNTRY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secretName }}
+              key: country
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        livenessProbe:
+          # /healthz answers before auth completes, and this deliberately does
+          # NOT assert that the cloud session is good. The eufy cloud auth
+          # breaks silently -- login still reports ok while the device list
+          # comes back empty (mega-yfue/eufy-sdk#182) -- and the remedy is
+          # clearing the persisted session and logging in fresh, not a
+          # restart. A probe that restarted on it would bury the problem in a
+          # crash-loop. Auth health goes to MQTT instead, where it is visible.
+          httpGet:
+            path: /healthz
+            port: ws
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pvc-eufy-bridge
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eufy-bridge
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: eufy-bridge
+spec:
+  selector:
+    app: eufy-bridge
+  ports:
+  - name: ws
+    port: 3000
+    targetPort: ws
+  # go2rtc, bundled with the bridge. Nothing consumes it yet -- the cameras
+  # have no RTSP of their own, so this is the only way video could ever be
+  # pulled, and it is here so that path is not a redeploy away.
+  - name: rtsp
+    port: 8554
+    targetPort: rtsp

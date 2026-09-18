@@ -1,0 +1,61 @@
+local:
+  namespace: eufy
+
+  bridge:
+    # ha-eufy-sdk-bridge. Note which project this is: every older guide points
+    # at bropat/eufy-security-ws, and that was archived on 2026-09-12 with
+    # development moved to mega-yfue/eufy-sdk. The successor is young.
+    #
+    # :latest against the vaultwarden precedent, and it should be pinned as
+    # soon as there is a known-good tag to pin to. The risk it carries is
+    # specific: this is the only path the cameras have, so an upstream change
+    # that breaks auth or renames an event takes the notifications out
+    # silently -- see the health topics below, which exist for exactly that
+    # class of failure.
+    image: ghcr.io/mega-yfue/ha-eufy-sdk-bridge:latest
+
+    storage:
+      # Sized from what the bridge actually writes, which is bounded:
+      # `.eufy-session.json` (a few KB) and one `last-event-<sn>.jpg` per
+      # camera, overwritten in place rather than accumulated -- so ~2MB for
+      # two cameras, and it grows with neither time nor event count. The
+      # event log goes to stdout, not here.
+      #
+      # 128Mi is ~60x that, in keeping with mqtt-data (100Mi) and grafana
+      # (96Mi). The size matters even though longhorn is thin-provisioned,
+      # because the scheduler reserves the *requested* size on every replica
+      # and numberOfReplicas is 3 -- so this reserves 384Mi, not 3Gi.
+      #
+      # What must not happen is this filling: the session file is what keeps
+      # 2FA a first-run step rather than a recurring chore.
+      size: 128Mi
+
+  shim:
+    # Built from ansible-local-network/services/eufy-mqtt (`make push`).
+    # The tag here and services/eufy-mqtt/VERSION are two halves of one thing
+    # and nothing checks that they agree -- bump both in the same change.
+    image: registry.88288338.xyz/eufy-mqtt:0.1.0
+
+  mqtt:
+    # The mosquitto Service in the `mqtt` namespace of this same repo.
+    host: mqtt.mqtt.svc.cluster.local
+    port: 1883
+    prefix: eufy
+
+  # Serials, not device names. Renaming a camera in the eufy app would
+  # otherwise silently move its topic out from under every subscriber; the
+  # friendly name is published on eufy/<sn>/info instead.
+  topicKey: sn
+
+  # Events worth pulling a still for. `motion` is deliberately absent: it
+  # fires on wind and headlights, and each snapshot costs a round trip that
+  # wakes the camera's P2P path. The on-device person/vehicle classifiers are
+  # the useful filter, which is the whole reason this list is narrow.
+  snapshotOn: "personDetected,strangerDetected,vehicleDetected,doorbellPress"
+
+  heartbeatSeconds: 60
+
+  # eufy cloud credentials. Use a DEDICATED account invited to the real one:
+  # the account allows a single active session, so sharing credentials with
+  # the phone app means the bridge and the app fight over it.
+  secretName: eufy-credentials

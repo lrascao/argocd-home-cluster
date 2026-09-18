@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eufy-mqtt
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: eufy-mqtt
+spec:
+  replicas: 1
+  # One, not for storage reasons -- it is stateless -- but because two would
+  # double every MQTT message and share one client id and last-will.
+  selector:
+    matchLabels:
+      app: eufy-mqtt
+  template:
+    metadata:
+      labels:
+        app: eufy-mqtt
+    spec:
+      containers:
+      - name: shim
+        image: {{ .Values.shim.image }}
+        env:
+        # In-namespace Service, so the short name is enough for the bridge.
+        - name: EUFY_WS_URL
+          value: "ws://eufy-bridge:3000/ws"
+        - name: EUFY_HTTP_URL
+          value: "http://eufy-bridge:3000"
+        - name: MQTT_HOST
+          value: {{ .Values.mqtt.host | quote }}
+        - name: MQTT_PORT
+          value: {{ .Values.mqtt.port | quote }}
+        - name: MQTT_PREFIX
+          value: {{ .Values.mqtt.prefix | quote }}
+        - name: EUFY_TOPIC_KEY
+          value: {{ .Values.topicKey | quote }}
+        - name: EUFY_SNAPSHOT_ON
+          value: {{ .Values.snapshotOn | quote }}
+        - name: EUFY_HEARTBEAT_SECONDS
+          value: {{ .Values.heartbeatSeconds | quote }}
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
