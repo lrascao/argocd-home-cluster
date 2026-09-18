@@ -102,9 +102,10 @@ spec:
   - name: ws
     port: 3000
     targetPort: ws
-  # go2rtc, bundled with the bridge. Nothing consumes it yet -- the cameras
-  # have no RTSP of their own, so this is the only way video could ever be
-  # pulled, and it is here so that path is not a redeploy away.
+  # go2rtc, bundled with the bridge. Nothing consumes it yet. Both cameras
+  # can also publish RTSP directly via the HomeBase 3 (`rtspStream`, off
+  # today) -- either way video is a choice not yet made, and this is here so
+  # making it is not a redeploy. See README.md.
   - name: rtsp
     port: 8554
     targetPort: rtsp

@@ -60,10 +60,27 @@ going `degraded` (which encodes that bug's signature — auth ok *and* zero
 devices), and on a `eufy/bridge/heartbeat` older than ~3 minutes. Do not try to
 infer health from the event topics.
 
-## Why there is no video here
+## Why there is no video here — and why that is a choice, not a limit
 
-Neither camera supports RTSP — eufy's own support article says the Floodlight
-Cam "does not support NAS/RTSP because of the hardware restriction", and the
-S100 has no such setting at all. The push/event path is the only way in, which
-is why this app is about events and not streams. The bridge does bundle go2rtc
-and the Service exposes 8554, so the option exists, but nothing uses it.
+Events are what this app is for. Video is available and deliberately unused.
+
+It is worth being precise about that, because the obvious research says
+otherwise: eufy's own support article states the Floodlight Cam "does not
+support NAS/RTSP because of the hardware restriction", and the S100 has no such
+setting. Both are true of those cameras **standalone**. Attached to the
+HomeBase 3 here, RTSP is published by the HomeBase instead, and both cameras
+expose a writable `rtspStream` property (`1145 NAS_STREAM_SWITHC`) plus a
+read-only `rtspUrl`:
+
+```
+device.properties T8425… →  rtspStream  bool, writable
+                            rtspUrl     string, readonly
+```
+
+Both are `false` today. Turning one on is `device.set` over the bridge's
+WebSocket, or the toggle in the app, and it is reversible.
+
+So the door to go2rtc, Frigate and continuous recording is open — the bridge
+bundles go2rtc and the Service already exposes 8554. It stays shut because
+notifications do not need it, and continuous video would want storage that
+longhorn replication is the wrong home for.
