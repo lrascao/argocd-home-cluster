@@ -34,7 +34,7 @@ local:
     # Built from ansible-local-network/services/eufy-mqtt (`make push`).
     # The tag here and services/eufy-mqtt/VERSION are two halves of one thing
     # and nothing checks that they agree -- bump both in the same change.
-    image: registry.88288338.xyz/eufy-mqtt:0.1.0
+    image: registry.88288338.xyz/eufy-mqtt:0.1.1
 
   mqtt:
     # The mosquitto Service in the `mqtt` namespace of this same repo.
