@@ -34,8 +34,8 @@ spec:
           value: {{ .Values.mqtt.prefix | quote }}
         - name: EUFY_TOPIC_KEY
           value: {{ .Values.topicKey | quote }}
-        - name: EUFY_SNAPSHOT_ON
-          value: {{ .Values.snapshotOn | quote }}
+        - name: EUFY_EVENT_IMAGE
+          value: {{ .Values.eventImage | quote }}
         - name: EUFY_HEARTBEAT_SECONDS
           value: {{ .Values.heartbeatSeconds | quote }}
         resources:

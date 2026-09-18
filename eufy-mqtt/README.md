@@ -42,10 +42,10 @@ so it is a first-run step and a recovery step, not a routine one.
 | `eufy/bridge/health` | ✅ | `{status, reason, ts}` |
 | `eufy/bridge/auth` | ✅ | the bridge's auth state |
 | `eufy/bridge/devices` | ✅ | device count |
-| `eufy/bridge/heartbeat` | ✅ | `{ts, last_event_at, devices, auth}` |
+| `eufy/bridge/heartbeat` | ✅ | `{ts, last_event_at, devices, auth, ws}` |
 | `eufy/<sn>/info` | ✅ | name, model, capabilities |
 | `eufy/<sn>/<event>` | — | `personDetected`, `vehicleDetected`, `motion`, … |
-| `eufy/<sn>/snapshot` | ✅ | JPEG, on detection events |
+| `eufy/<sn>/event_image` | ✅ | JPEG: the frame the detection fired on |
 
 ## Alert on health, never on silence
 
