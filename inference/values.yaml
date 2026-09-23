@@ -35,7 +35,7 @@ local:
     # argument for vLLM over llama.cpp -- and 653 tok/s aggregate on a model
     # the CPU backend could not load in BF16 at all.
     gpu:
-      enabled: false
+      enabled: true
       # The CUDA image. Same vLLM version as the CPU one above; bump together.
       image: vllm/vllm-openai:v0.27.1
       # Matches node.homelab/gpu, which cloud-init derives from nvidia-smi.
@@ -83,8 +83,14 @@ local:
     # Do not lower maxLen to make room. That is the knob that failed first
     # here and it fails as a 500 per request, not as an OOM.
     model:
-      name: Qwen/Qwen3-1.7B
-      servedName: qwen3-1.7b
+      # Qwen3-32B, AWQ 4-bit (~19 GB) -- chosen over the FP8 build (~33 GB)
+      # for the reason the 14B measurement exposed: generation here is
+      # bandwidth-bound, so halving the bytes per token is what buys speed.
+      # L40S at ~864 GB/s over ~19 GB puts the ceiling near 45 tok/s, against
+      # 26 measured for the 14B in BF16. vLLM detects AWQ from the model's
+      # own config; no quantization flag is needed.
+      name: Qwen/Qwen3-32B-AWQ
+      servedName: qwen3-32b-awq
       # 40960 -- the model's own max_position_embeddings, so this is the
       # ceiling rather than a choice.
       #
@@ -237,7 +243,7 @@ local:
     requests:
       cpu: "6"
       memory: 8Gi
-      ephemeral-storage: 12Gi
+      ephemeral-storage: 24Gi
     limits:
       # No CPU limit on purpose: a cgroup quota throttles, and throttling a
       # token generator shows up directly as latency. The request is what
@@ -257,7 +263,7 @@ local:
       # both or the pod is OOMKilled the moment the cache fills -- which is a
       # failure at steady state under load, not at startup.
       memory: 16Gi
-      ephemeral-storage: 20Gi
+      ephemeral-storage: 40Gi
 
   # Where this is allowed to run. Both halves are required and they do
   # different jobs: the toleration lets it onto the tainted cloud node, the

@@ -266,7 +266,10 @@ spec:
         # says fits.
         - name: models
           emptyDir:
-            sizeLimit: 20Gi
+            # Sized for the weights of the largest model this chart serves,
+            # not the current one: the pod is evicted when it overruns, mid
+            # download, with no other warning. A 32B at 4-bit is ~19 GB.
+            sizeLimit: {{ .Values.vllm.weightsVolumeGi | default 40 }}Gi
         - name: dshm
           emptyDir:
             medium: Memory
