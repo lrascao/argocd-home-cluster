@@ -38,8 +38,18 @@ spec:
           operator: Equal
           value: {{ .Values.placement.tolerationValue }}
           effect: NoSchedule
+        {{- if .Values.vllm.gpu.enabled }}
+        # The GPU node's second taint. Without this the pod sits Pending on it
+        # reporting an untolerated taint, which reads like a capacity problem.
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        {{- end }}
       nodeSelector:
         {{ .Values.placement.nodeSelectorKey }}: {{ .Values.placement.nodeSelectorValue }}
+        {{- if .Values.vllm.gpu.enabled }}
+        node.homelab/gpu: {{ .Values.vllm.gpu.model }}
+        {{- end }}
 
       initContainers:
         # The weights problem, in the open. There is no Longhorn on the cloud
@@ -57,7 +67,7 @@ spec:
         # Same image as the server, so this costs no extra pull: the vLLM
         # image already carries huggingface_hub.
         - name: fetch-weights
-          image: {{ .Values.vllm.image }}
+          image: {{ if .Values.vllm.gpu.enabled }}{{ .Values.vllm.gpu.image }}{{ else }}{{ .Values.vllm.image }}{{ end }}
           command: ["python3", "-c"]
           args:
             - |
@@ -118,7 +128,7 @@ spec:
 
       containers:
         - name: vllm
-          image: {{ .Values.vllm.image }}
+          image: {{ if .Values.vllm.gpu.enabled }}{{ .Values.vllm.gpu.image }}{{ else }}{{ .Values.vllm.image }}{{ end }}
           args:
             - --model
             - /models/{{ .Values.vllm.model.servedName }}
@@ -172,10 +182,16 @@ spec:
             # this to the weight size rather than carving it out of a budget
             # -- so an unset value is an invisible 4 GiB on top of everything
             # the limits below account for.
+            {{- if not .Values.vllm.gpu.enabled }}
+            # Both are CPU-backend settings with no meaning on a GPU, where the
+            # KV cache is carved out of VRAM by --gpu-memory-utilization.
+            # Leaving them set would break nothing; it would invite the next
+            # reader to believe the CPU sizing arithmetic still applies.
             - name: VLLM_CPU_KVCACHE_SPACE
               value: {{ .Values.vllm.kvCacheSpaceGiB | quote }}
             - name: OMP_NUM_THREADS
               value: {{ .Values.vllm.threads | quote }}
+            {{- end }}
             - name: VLLM_LOGGING_LEVEL
               value: INFO
           ports:
@@ -229,8 +245,18 @@ spec:
             failureThreshold: 3
             timeoutSeconds: 10
 
+          # nvidia.com/gpu is merged into a COPY of the resources map rather
+          # than appended after it -- appending would emit a second `limits:`
+          # key under the same mapping. It is the request that actually hands
+          # the container a GPU: CDI injects the devices because of this, not
+          # because the pod landed on a GPU node. A pod without it sees no
+          # /dev/nvidia* on the same machine (verified 2026-09-23).
+          {{- $res := deepCopy .Values.resources }}
+          {{- if .Values.vllm.gpu.enabled }}
+          {{- $_ := set (index $res "limits") "nvidia.com/gpu" .Values.vllm.gpu.count }}
+          {{- end }}
           resources:
-{{ toYaml .Values.resources | indent 12 }}
+{{ toYaml $res | indent 12 }}
 
       volumes:
         # Disk-backed, NOT medium: Memory. An emptyDir with medium: Memory is

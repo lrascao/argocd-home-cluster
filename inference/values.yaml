@@ -4,6 +4,44 @@ local:
     # CUDA one -- vllm/vllm-openai is GPU-only and will not start here.
     image: vllm/vllm-openai-cpu:v0.27.1-x86_64
 
+    # Which node this serves from, and therefore which half of the chart
+    # applies. Off is the CPU backend on a CloudNative node, which is what
+    # this has always been; on is a burst GPU session (see the L40S notes in
+    # ansible-local-network's docs/inference-lab-and-healthcheck.md).
+    #
+    # A toggle rather than a second chart because only four things differ:
+    # the image, one resource limit, the extra taint/label, and two env vars
+    # that mean nothing without a CPU backend. Everything that took B-1 and
+    # B-2 to get right -- the probe budget, the weights initContainer, the
+    # thinking-off default, /dev/shm -- is the same on both.
+    #
+    # MEASURED on an L40S (2026-09-23), Qwen3-1.7B, against 29 tok/s for the
+    # same model on the 8-vCPU CPU node:
+    #
+    #                  Qwen3-1.7B        Qwen3-14B (27.5 GiB of weights)
+    #   1 request      167-173 tok/s     26 tok/s
+    #   8 concurrent   1,333 tok/s       190 tok/s
+    #   32 concurrent  3,556 tok/s       653 tok/s
+    #   KV cache       338,336 tokens    75,808 tokens
+    #
+    # Read the 14B column before choosing a model. Generation on this card is
+    # memory-bandwidth-bound exactly as it is on the CPU node: the L40S moves
+    # ~864 GB/s, so 27.5 GiB of weights caps it near 30 tok/s and it measured
+    # 26 -- SLOWER, single-stream, than the 1.7B managed on the CPU node at
+    # 29. A GPU here buys a bigger model, not a faster one.
+    #
+    # What it does buy outright is concurrency: 46 GB of VRAM holds a KV cache
+    # deep enough that requests batch instead of queueing, which is the whole
+    # argument for vLLM over llama.cpp -- and 653 tok/s aggregate on a model
+    # the CPU backend could not load in BF16 at all.
+    gpu:
+      enabled: false
+      # The CUDA image. Same vLLM version as the CPU one above; bump together.
+      image: vllm/vllm-openai:v0.27.1
+      # Matches node.homelab/gpu, which cloud-init derives from nvidia-smi.
+      model: l40s
+      count: 1
+
     # Qwen3-1.7B, stepped back DOWN from the 4B, and the reason is latency
     # rather than anything about the model's answers.
     #
@@ -225,6 +263,11 @@ local:
   # different jobs: the toleration lets it onto the tainted cloud node, the
   # nodeSelector stops it landing anywhere else. With only the toleration it
   # would be free to schedule onto node1-4, which run etcd.
+  # On a GPU session BOTH taints have to be tolerated: cloud nodes carry
+  # location=cloud, and a GPU node carries nvidia.com/gpu=present on top of
+  # it so that things which merely tolerate the cloud -- this workload's own
+  # CPU variant included -- cannot drift onto a machine billed by the
+  # GPU-hour. vllm.gpu.enabled adds that toleration and the gpu nodeSelector.
   placement:
     tolerationKey: location
     tolerationValue: cloud
