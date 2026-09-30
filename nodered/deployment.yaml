@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: nodered
-        image: nodered/node-red
+        image: nodered/node-red:5.0.7
         args: ["--settings", "/nodered/config/settings.js", "--port", "1880", "--userDir", "/nodered/data"]
         env:
         - name: NODE_RED_DBUS_ADDRESS
