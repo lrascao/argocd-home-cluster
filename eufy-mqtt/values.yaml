@@ -34,7 +34,7 @@ local:
     # Built from ansible-local-network/services/eufy-mqtt (`make push`).
     # The tag here and services/eufy-mqtt/VERSION are two halves of one thing
     # and nothing checks that they agree -- bump both in the same change.
-    image: registry.88288338.xyz/eufy-mqtt:0.1.2
+    image: registry.88288338.xyz/eufy-mqtt:0.1.3
 
   mqtt:
     # The mosquitto Service in the `mqtt` namespace of this same repo.
@@ -54,6 +54,18 @@ local:
   # production, and it returns what is in view *now* rather than what
   # triggered the alert. Set to false to stop publishing images entirely.
   eventImage: true
+
+  # The ONLY properties that may be written over MQTT, as SERIAL.property,
+  # comma separated -- publish a JSON value to eufy/<sn>/set/<property>.
+  #
+  # An allowlist and never a wildcard: mosquitto here is anonymous and open
+  # to the whole LAN, and the HomeBase exposes a writable `armingMode`, so a
+  # pass-through would let any device on the wifi disarm the alarm with one
+  # publish. Add a pair here only for a property something actually needs.
+  #
+  # Front Door floodlight on/off, for the Node-RED night-light flow. Brightness
+  # is deliberately left out until something needs it.
+  writable: "T8425T23251202B3.light"
 
   heartbeatSeconds: 60
 

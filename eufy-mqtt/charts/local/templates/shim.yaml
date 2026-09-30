@@ -36,6 +36,8 @@ spec:
           value: {{ .Values.topicKey | quote }}
         - name: EUFY_EVENT_IMAGE
           value: {{ .Values.eventImage | quote }}
+        - name: EUFY_WRITABLE
+          value: {{ .Values.writable | default "" | quote }}
         - name: EUFY_HEARTBEAT_SECONDS
           value: {{ .Values.heartbeatSeconds | quote }}
         resources:
