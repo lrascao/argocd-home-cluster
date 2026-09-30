@@ -43,8 +43,11 @@ data:
     # Home Assistant entities that had been created by retained MQTT discovery
     # never came back.
     #
-    # What survives a wipe is whatever gets republished. zigbee2mqtt republishes
-    # its discovery on every connect and recovered by itself. Node-RED's Daikin
+    # What survives a wipe is whatever gets republished. zigbee2mqtt does NOT
+    # count: it sends discovery only on its own startup (2.x ignores HA's
+    # "online" birth, and a broker reconnect is not a startup), so the switch
+    # to this volume on 2026-09-14 left every zigbee device missing from HA
+    # until z2m was restarted on 2026-09-30. Node-RED's Daikin
     # tab republishes daikin/sensor/state every 120s, so the values came back --
     # but it publishes the discovery configs from a once:true inject five
     # seconds after startup, which lost the race with its own broker connection

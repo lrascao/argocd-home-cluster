@@ -5,6 +5,13 @@ zigbee2mqtt:
       server: "mqtt://mqttgateway.home:1883"
     serial:
       adapter: deconz
+    homeassistant:
+      # -- z2m re-sends device states when HA announces itself here, so a
+      # -- restarted HA isn't left showing unknown until each sensor reports.
+      # -- The chart default is hass/status, but HA announces on
+      # -- homeassistant/status. (Discovery is only sent on z2m's own startup,
+      # -- so a wiped broker still needs a z2m restart.)
+      status_topic: homeassistant/status
 
   service:
     # -- no load balancer implementation in the cluster, a LoadBalancer
