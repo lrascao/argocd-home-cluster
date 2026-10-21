@@ -6,13 +6,18 @@ local:
     # at bropat/eufy-security-ws, and that was archived on 2026-09-12 with
     # development moved to mega-yfue/eufy-sdk. The successor is young.
     #
-    # :latest against the vaultwarden precedent, and it should be pinned as
-    # soon as there is a known-good tag to pin to. The risk it carries is
-    # specific: this is the only path the cameras have, so an upstream change
-    # that breaks auth or renames an event takes the notifications out
-    # silently -- see the health topics below, which exist for exactly that
-    # class of failure.
-    image: ghcr.io/mega-yfue/ha-eufy-sdk-bridge:latest
+    # Pinned, and not upstream's image: upstream 0.6.0 plus one patch, built in
+    # ansible-local-network/services/eufy-bridge (`make push`). Upstream's
+    # on-detection refresh could store an EARLIER event's picture as a new
+    # detection's -- a person at the door, a photo of an empty driveway from
+    # seven events before -- and the patch makes a detection fetch its own
+    # event's cover and name its record_id. It is offered upstream; when a
+    # release carries it, point this back at ghcr.io/mega-yfue/... pinned to
+    # that release. services/eufy-bridge/README.md has the detail.
+    #
+    # Still the cameras' only path, so a bad bridge takes the notifications out
+    # silently -- the health topics below exist for exactly that.
+    image: registry.88288338.xyz/ha-eufy-sdk-bridge:0.6.0-owncover.1
 
     storage:
       # Sized from what the bridge actually writes, which is bounded:
@@ -34,7 +39,7 @@ local:
     # Built from ansible-local-network/services/eufy-mqtt (`make push`).
     # The tag here and services/eufy-mqtt/VERSION are two halves of one thing
     # and nothing checks that they agree -- bump both in the same change.
-    image: registry.88288338.xyz/eufy-mqtt:0.1.3
+    image: registry.88288338.xyz/eufy-mqtt:0.1.4
 
   mqtt:
     # The mosquitto Service in the `mqtt` namespace of this same repo.
