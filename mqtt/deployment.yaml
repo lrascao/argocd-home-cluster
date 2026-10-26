@@ -26,7 +26,15 @@ spec:
         fsGroup: 1883
       containers:
       - name: mqtt
-        image: eclipse-mosquitto:2
+        # Pinned by digest for the same reason as the mqtt-external broker:
+        # `:2` has moved to 2.1.2 upstream, so the version that ran was whatever
+        # the scheduled node's containerd cache happened to hold. This broker
+        # does not trip the 2.1 password-file breakage — it sets
+        # allow_anonymous true and defines no password_file — but there is no
+        # reason for it to keep drifting either. Its persistence file lives on a
+        # PVC rather than a secret mount, so the O_NOFOLLOW change does not
+        # reach it.
+        image: eclipse-mosquitto:2.0.21@sha256:94f5a3d7deafa59fa3440d227ddad558f59d293c612138de841eec61bfa4d353
         ports:
         - containerPort: 1883
         volumeMounts:

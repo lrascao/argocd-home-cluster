@@ -17,15 +17,48 @@ spec:
     spec:
       containers:
       - name: mqtt
-        image: eclipse-mosquitto:2
+        # Pinned by digest, because `:2` is not a version. It has already moved
+        # to 2.1.2 upstream, and under 2.1 this broker does not start: mosquitto
+        # 2.1 reads the password file through the new password-file plugin, which
+        # opens it with O_NOFOLLOW, and every key in a Kubernetes secret mount is
+        # a symlink (passwd -> ..data/passwd). The open fails with ELOOP and the
+        # broker exits with
+        #   password-file: Error: Unable to open pwfile "/mosquitto/security/passwd".
+        # The subPath mount below is the actual fix and works on 2.0 and 2.1
+        # alike; this pin is what stops the running version from depending on
+        # which node's containerd cache answers the pull.
+        #
+        # Verified against 2.1.2 itself: with the plain secret mount it fails
+        # exactly as above (rc 13); with the subPath mount below it loads the
+        # pwfile, registers builtin-security and reaches "running".
+        #
+        # To move to 2.1.x: bump the digest and keep the subPath. It will warn
+        # three times about the pwfile being world readable, and not owned by
+        # the mosquitto user or group. Those are warnings only in 2.1 (upstream
+        # still has each refusal #if 0'd out) and they are NOT the breakage.
+        #
+        # Do not "fix" them by tightening defaultMode: mosquitto drops to the
+        # mosquitto user (1883) before reading the file, a secret volume's files
+        # are always root-owned, and world-readable is therefore the only reason
+        # uid 1883 can read it at all. chmod 0600 would turn a warning into an
+        # outage. When a future mosquitto does enforce this, the pwfile will
+        # have to be staged somewhere it can actually own — an initContainer
+        # copying it into an emptyDir — because a secret mount cannot give it.
+        image: eclipse-mosquitto:2.0.21@sha256:94f5a3d7deafa59fa3440d227ddad558f59d293c612138de841eec61bfa4d353
         ports:
         - containerPort: 1883
         volumeMounts:
          - name: certs-mqtt
            mountPath: "/mosquitto/certs"
            readOnly: true
+         # Mounted as a single file rather than as the secret's directory, so
+         # that /mosquitto/security/passwd is a regular file instead of a
+         # symlink into ..data — see the O_NOFOLLOW note on the image above.
+         # The cost of subPath is that it does not track secret updates, so
+         # changing the password needs a pod restart.
          - name: passwd-mqtt
-           mountPath: "/mosquitto/security"
+           mountPath: "/mosquitto/security/passwd"
+           subPath: passwd
            readOnly: true
          - name: conf-mqtt
            mountPath: "/mosquitto/config"
