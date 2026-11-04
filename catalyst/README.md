@@ -1,8 +1,16 @@
 # catalyst
 
 The Diagrid Catalyst agent for the `homelab` private region, in `cra-agent`,
-plus what this cluster puts in front of it: a passthrough HTTPProxy for
-`*.diagrid.home` and the sealed agent credentials.
+plus what this cluster puts in front of it: passthrough HTTPProxies for the
+region's names and the sealed agent credentials.
+
+Clients use the region's managed names, `*.<ingress-wildcard-domain>` (see
+ConfigMap `region-details`). The house DNS answers them locally with the
+ingress VIP (`db.catalyst` in ansible-local-network) -- Diagrid's public
+answer is a CNAME to `diagrid.home`, which no public resolver can follow --
+and contour hands the TLS stream to the gateway's `8443` listener without
+opening it. Recreating the region changes the domain, and both places with
+it.
 
 The Application's release name is pinned to `catalyst`. That is what keeps
 every object's name and selector identical to the hand-installed helm release

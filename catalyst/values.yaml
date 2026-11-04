@@ -12,8 +12,8 @@ catalyst:
         ingress:
           # The ingress VIP. Without it the agent waits forever for a
           # LoadBalancer address this cluster has nothing to hand out; contour
-          # owns :443 there and passes *.diagrid.home through to the gateway
-          # (local.hosts below).
+          # owns :443 there and passes the region's names through to the
+          # gateway (local.hosts below).
           ip_addr: 192.168.3.40
 
       project:
@@ -61,18 +61,25 @@ catalyst:
 local:
   namespace: cra-agent
 
-  # Names contour hands to the gateway, one HTTPProxy each. The gateway only
-  # answers for names under the region's ingress-wildcard-domain (ConfigMap
-  # region-details in cra-agent), so a name listed here routes nothing useful
-  # until the region uses it. Keeping Diagrid's managed domain means adding
-  # "*.<ingress-wildcard-domain>" too: contour matches on the SNI the client
-  # actually sends.
+  # Names contour hands to the gateway, one HTTPProxy each; contour matches on
+  # the SNI the client sends.
   hosts:
+  # The region's managed domain -- ingress-wildcard-domain in ConfigMap
+  # region-details. These are the names Catalyst hands out and the only ones
+  # the gateway answers for: its SNI chains, its virtual hosts and its
+  # certificate (ZeroSSL, *.<this> only) all use them. The house DNS answers
+  # them locally with the ingress VIP (db.catalyst in ansible-local-network);
+  # Diagrid's public answer, a CNAME to diagrid.home, resolves nowhere.
+  - "*.e7tvfqjhulsxxzixrntfpe6mgzyny72w.r1.privatediagrid.net"
+  # Reaches the gateway, which then serves the certificate above, so a TLS
+  # client refuses it. Kept so a *.diagrid.home name fails at the gateway
+  # rather than at contour.
   - "*.diagrid.home"
 
   gateway:
     service: gateway-envoy
-    # Not 8443: 8080 is the gateway's only listener (tls_inspector + SNI
-    # chains, plain-HTTP fallback), and 8443 has nothing behind it while the
-    # chart's gateway.tls.enabled is false.
-    port: 8080
+    # The https-listener: the same SNI passthrough chains as 8080, plus a
+    # TLS-terminating fallback for the HTTP virtual hosts (management, oidc,
+    # trust, tunnels). The control plane pushes it once the agent has
+    # registered; 8080's fallback is plain HTTP, so HTTPS sent there fails.
+    port: 8443
