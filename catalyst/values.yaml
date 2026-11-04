@@ -6,10 +6,11 @@ global:
   # hence Dapr's vocabulary: sasl_mechanism PLAINTEXT is Dapr's name for
   # SASL/PLAIN, not the Kafka security protocol.
   #
-  # NOT WORKING YET: no sasl_password. The broker's CLIENT listener is
-  # SASL_PLAINTEXT, user1's password lives in kafka/kafka-user-passwords, and
-  # it cannot go in this public file -- it needs sealing, once the agent's
-  # field for it is known.
+  # The broker's CLIENT listener is SASL_PLAINTEXT, so the agent refuses to
+  # start without a password ("SASLPassword is required"). user1's password
+  # (kafka/kafka-user-passwords, client-passwords) is sealed into
+  # catalyst-kafka and reaches the agent as an environment variable -- see
+  # catalyst.agent.extraEnvs.
   kafka:
     disabled: false
     create: false
@@ -18,6 +19,8 @@ global:
       brokers: kafka.kafka.svc.cluster.local:9092
       auth_type: password
       sasl_username: user1
+      # Empty on purpose, see catalyst.agent.extraEnvs.
+      sasl_password: ""
       sasl_mechanism: PLAINTEXT
       disable_tls: true
       # lets app sidecars reach the Kafka pod through Catalyst's network policies
@@ -35,6 +38,17 @@ catalyst:
     existingJoinTokenSecret:
       name: catalyst-join-token
       key: join_token
+    # external_kafka has no secret reference in the chart, but the agent
+    # resolves any config key from CRA_ + its upper-cased path, and the
+    # environment wins over the config file. Tested 2026-11-04 with a
+    # throwaway agent: the CRA_-prefixed name passes validation, the bare
+    # PROJECT_EXTERNAL_KAFKA_SASL_PASSWORD does not.
+    extraEnvs:
+    - name: CRA_PROJECT_EXTERNAL_KAFKA_SASL_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: catalyst-kafka
+          key: sasl_password
     config:
       host:
         ingress:
