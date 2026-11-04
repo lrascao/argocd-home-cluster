@@ -1,3 +1,31 @@
+# Top level, not under catalyst:, because helm only hands a subchart the
+# parent's own global block.
+global:
+  # Managed pub/sub on the Kafka in namespace kafka (bitnami chart, installed
+  # by hand). The agent writes these into each project's Dapr Kafka component,
+  # hence Dapr's vocabulary: sasl_mechanism PLAINTEXT is Dapr's name for
+  # SASL/PLAIN, not the Kafka security protocol.
+  #
+  # NOT WORKING YET: no sasl_password. The broker's CLIENT listener is
+  # SASL_PLAINTEXT, user1's password lives in kafka/kafka-user-passwords, and
+  # it cannot go in this public file -- it needs sealing, once the agent's
+  # field for it is known.
+  kafka:
+    disabled: false
+    create: false
+    external:
+      enabled: true
+      brokers: kafka.kafka.svc.cluster.local:9092
+      auth_type: password
+      sasl_username: user1
+      sasl_mechanism: PLAINTEXT
+      disable_tls: true
+      # lets app sidecars reach the Kafka pod through Catalyst's network policies
+      namespace: kafka
+      pod_selector_match_labels:
+        - name: app.kubernetes.io/instance
+          value: kafka
+
 catalyst:
   # No join_token here: this repo is public. The agent reads it from the
   # sealed catalyst-join-token secret (charts/local/templates/), which also
