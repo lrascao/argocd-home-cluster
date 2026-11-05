@@ -222,10 +222,27 @@ local:
         # fails safely; this says "tool calling is wanted", not "tool calling
         # is safe everywhere".
         calling: true
-        # Model-specific, so it travels with the model above rather than with
-        # the server flags. Kept set while calling is false: it is the right
-        # value for Qwen3 and costs nothing until the gate opens.
-        parser: qwen3_xml
+        # Model-specific, so it travels with the model above rather than
+        # with the server flags -- and it has to match the CHECKPOINT, not
+        # the family. This was qwen3_xml, which is wrong for Qwen3-32B-AWQ,
+        # and wrong in the silent direction. With tool_choice auto vLLM
+        # answered HTTP 200 and put the call in content as plain text:
+        #
+        #   <tool_call>{"name": "get_weather", ...}</tool_call>
+        #
+        # with tool_calls null -- so a client sees chatter about calling a
+        # tool and no tool call, and nothing anywhere reports an error.
+        #
+        # A FORCED tool_choice worked even so, because that path is guided
+        # decoding and never reaches the parser. Testing only the forced case
+        # hides this completely; test tool_choice auto.
+        #
+        # hermes, because this checkpoint's own chat_template emits
+        # <tool_call>...</tool_call> and contains no <function= or
+        # <parameter=, which is what qwen3_xml parses. Read out of the
+        # running pod rather than inferred from the model name.
+        # Measured 2026-11-05 on an H100.
+        parser: hermes
 
     # GiB, and explicit. vLLM defaults this to 4 GiB when unset; on the
     # 7.98 GiB box this replaced, that default plus weights was the most
