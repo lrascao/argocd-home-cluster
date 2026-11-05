@@ -1,0 +1,17 @@
+# Headless and empty of ports: the bridge listens on nothing and is never
+# dialled. A StatefulSet needs a serviceName, and this is it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: telegram-bridge
+  namespace: telegram-bridge
+  labels:
+    app: telegram-bridge
+spec:
+  clusterIP: None
+  selector:
+    app: telegram-bridge
+  ports:
+  - name: none
+    port: 9
+    protocol: TCP

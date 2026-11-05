@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: telegram-bridge
+  namespace: telegram-bridge
+  labels:
+    app: telegram-bridge
+spec:
+  serviceName: telegram-bridge
+  # One replica, and it matters: two would both read the same Saved Messages
+  # and start the same agent run twice. The cursor is on an RWO volume, which
+  # also makes a second one impossible rather than merely wrong.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telegram-bridge
+  template:
+    metadata:
+      labels:
+        app: telegram-bridge
+      annotations:
+        # No rollout happens when only the script changes, so pin the pod to
+        # the ConfigMap's content. Update this when bridge.py changes, or the
+        # old code keeps running against a new ConfigMap.
+        checksum/src: "bridge-py-v1"
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Longhorn hands over a bare ext4 volume owned by root.
+        fsGroup: 65532
+      containers:
+      - name: bridge
+        image: python:3.12-slim@sha256:e695ab189fa2d082b1c61c69a6b888a5adeca61ceeccad107b1ed2a125721a9e
+        # Standard library only, so there is nothing to install and no registry
+        # to depend on at start. -I for isolated mode: the script is mounted
+        # from a ConfigMap, and nothing beside it should ever be importable.
+        command: ["python3", "-I", "/src/bridge.py"]
+        env:
+        - name: TELEGRAM_MCP_URL
+          value: http://telegram.telegram-mcp.svc.cluster.local:8080/mcp
+        - name: CATALYST_URL
+          value: https://http-prj14384718.e7tvfqjhulsxxzixrntfpe6mgzyny72w.r1.privatediagrid.net:443
+        - name: AGENT_APPID
+          value: shopping-agent
+        # Saved Messages. The only chat that can drive the agent: nobody who
+        # messages Luis's account can reach it from anywhere else.
+        - name: WATCH_CHAT
+          value: me
+        # Must match the marker the agent is told to prefix its replies with
+        # (catalyst/shopping-agent.yaml). It is how the bridge tells Luis's
+        # messages from the agent's own, since both are outgoing in this chat.
+        - name: AGENT_MARKER
+          value: "🛒"
+        - name: POLL_SECONDS
+          value: "5"
+        - name: STATE_PATH
+          value: /state/state.json
+        # The bearer for telegram-mcp's nginx. A copy of telegram-mcp-auth's
+        # MCP_BEARER_TOKEN: secrets do not cross namespaces, so it is sealed
+        # again here -- rotating one means rotating both.
+        - name: TELEGRAM_MCP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: telegram-bridge-auth
+              key: TELEGRAM_MCP_TOKEN
+        # The telegram-bridge AppId's own Catalyst API token, which is what
+        # lets it invoke shopping-agent.
+        - name: CATALYST_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: telegram-bridge-auth
+              key: CATALYST_API_TOKEN
+        # It listens on nothing, so there is no probe to make. A crash loop is
+        # visible in restarts; a wedged poll shows up as silence in the log.
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: src
+          mountPath: /src
+          readOnly: true
+        - name: state
+          mountPath: /state
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: src
+        configMap:
+          name: telegram-bridge-src
+      - name: tmp
+        emptyDir: {}
+  volumeClaimTemplates:
+  # Holds two things that must survive a restart: the id of the last message
+  # already handled, so a restart does not replay Saved Messages as a pile of
+  # shopping commands, and the agent thread id, so the agent still remembers
+  # which milk it asked about.
+  - metadata:
+      name: state
+    spec:
+      storageClassName: longhorn
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi

@@ -1,0 +1,242 @@
+# The bridge itself. Python standard library only -- no pip install at start,
+# so unlike continente-mcp and polymarket-mcp this pod needs no package
+# registry to come up, and there is no image to build for it either.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telegram-bridge-src
+  namespace: telegram-bridge
+data:
+  bridge.py: |
+    """Telegram -> Catalyst shopping-agent trigger.
+
+    Watches Luis's Saved Messages chat and starts an agent run for anything he
+    writes there. The agent answers in the same chat itself, through its own
+    send_message grant, so this process only ever triggers -- it never replies.
+
+    Why Saved Messages, and why polling: telegram-mcp is signed in AS Luis, so
+    everything he writes is an OUTGOING message. wait_for_new_message and
+    wait_for_settled_message block on INCOMING messages from other people and
+    would never see him. get_messages_after does return own messages (`out`),
+    and upstream documents it as the tool "for integrators that resume from the
+    last message they saw", which is this. The cost is a poll loop instead of a
+    long-poll, which at one cheap call every few seconds is nothing.
+
+    It also means only Luis's own Saved Messages can drive the agent. Nobody who
+    messages his account can reach it, which is the property to preserve if this
+    is ever pointed at another chat.
+    """
+    import json
+    import os
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    MCP_URL = os.environ["TELEGRAM_MCP_URL"]
+    MCP_TOKEN = os.environ["TELEGRAM_MCP_TOKEN"]
+    CATALYST_URL = os.environ["CATALYST_URL"].rstrip("/")
+    CATALYST_TOKEN = os.environ["CATALYST_API_TOKEN"]
+    AGENT = os.environ.get("AGENT_APPID", "shopping-agent")
+    CHAT = os.environ.get("WATCH_CHAT", "me")
+    # The agent is told to start every Telegram message with this. Its replies
+    # land in the same chat and are outgoing too, so without this the bridge
+    # would feed the agent its own words forever.
+    MARKER = os.environ.get("AGENT_MARKER", "\U0001F6D2")
+    POLL_SECONDS = float(os.environ.get("POLL_SECONDS", "5"))
+    STATE_PATH = os.environ.get("STATE_PATH", "/state/state.json")
+    # Second line of defence behind MARKER: if a loop starts anyway, this stops
+    # it from running away while someone looks at the logs.
+    MAX_RUNS_PER_WINDOW = int(os.environ.get("MAX_RUNS_PER_WINDOW", "8"))
+    WINDOW_SECONDS = float(os.environ.get("WINDOW_SECONDS", "120"))
+
+
+    def log(msg):
+        print(f"[bridge] {msg}", flush=True)
+
+
+    def load_state():
+        try:
+            with open(STATE_PATH) as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return {}
+
+
+    def save_state(state):
+        tmp = STATE_PATH + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(state, fh)
+        os.replace(tmp, STATE_PATH)
+
+
+    class Mcp:
+        """One streamable-HTTP session against telegram-mcp."""
+
+        def __init__(self, url, token):
+            self.url = url
+            self.token = token
+            self.session = None
+
+        def _post(self, payload, timeout=90):
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "Authorization": f"Bearer {self.token}",
+            }
+            if self.session:
+                headers["mcp-session-id"] = self.session
+            req = urllib.request.Request(
+                self.url, data=json.dumps(payload).encode(), headers=headers, method="POST"
+            )
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            out = None
+            for line in resp.read().decode().splitlines():
+                line = line.strip()
+                if line.startswith("data: "):
+                    line = line[6:]
+                if line.startswith("{"):
+                    try:
+                        out = json.loads(line)
+                    except ValueError:
+                        pass
+            return resp.headers.get("mcp-session-id"), out
+
+        def connect(self):
+            self.session = None
+            sid, _ = self._post(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "telegram-bridge", "version": "1"},
+                    },
+                }
+            )
+            self.session = sid
+            self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            log(f"mcp session {sid}")
+
+        def call(self, name, args):
+            _, res = self._post(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": args},
+                }
+            )
+            result = (res or {}).get("result") or {}
+            text = (result.get("content") or [{}])[0].get("text", "")
+            if result.get("isError"):
+                raise RuntimeError(f"{name}: {text[:200]}")
+            return text
+
+
+    def agent_post(path, body):
+        url = f"{CATALYST_URL}/v1.0/invoke/{AGENT}/method/{path.lstrip('/')}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "dapr-api-token": CATALYST_TOKEN},
+            method="POST",
+        )
+        # Long: the run does the whole shopping exchange, tool calls included.
+        resp = urllib.request.urlopen(req, timeout=300)
+        raw = resp.read().decode("utf-8", "replace")
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return {"raw": raw[:400]}
+
+
+    def ensure_thread(state):
+        """One agent thread per watched chat, so the agent remembers the
+        question it asked. Without it, "2" in answer to "which milk?" arrives
+        with no idea what the options were."""
+        tid = state.get("thread_id")
+        if tid:
+            return tid
+        created = agent_post("v1/threads", {})
+        tid = created.get("id") or created.get("thread_id")
+        if not tid:
+            raise RuntimeError(f"no thread id in {created}")
+        state["thread_id"] = tid
+        save_state(state)
+        log(f"created agent thread {tid}")
+        return tid
+
+
+    def main():
+        state = load_state()
+        mcp = Mcp(MCP_URL, MCP_TOKEN)
+        mcp.connect()
+        runs = []
+
+        if "last_id" not in state:
+            # First boot: start from now. Replaying whatever is already sitting
+            # in Saved Messages as a pile of shopping commands would be rude.
+            latest = json.loads(mcp.call("get_messages_after", {"chat_id": CHAT, "limit": 1}))
+            msgs = latest.get("messages") or []
+            state["last_id"] = msgs[-1]["id"] if msgs else 0
+            save_state(state)
+            log(f"starting from message id {state['last_id']}")
+
+        while True:
+            try:
+                payload = json.loads(
+                    mcp.call(
+                        "get_messages_after",
+                        {"chat_id": CHAT, "after_id": state["last_id"], "limit": 20},
+                    )
+                )
+            except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError, ValueError) as err:
+                log(f"poll failed, reconnecting: {err}")
+                time.sleep(POLL_SECONDS)
+                try:
+                    mcp.connect()
+                except Exception as err2:  # noqa: BLE001 - keep the loop alive
+                    log(f"reconnect failed: {err2}")
+                continue
+
+            for msg in payload.get("messages") or []:
+                mid = msg.get("id")
+                if mid is None or mid <= state["last_id"]:
+                    continue
+                # Advance first: a message that makes the agent fail is not
+                # retried forever.
+                state["last_id"] = mid
+                save_state(state)
+
+                text = (msg.get("text") or "").strip()
+                if not msg.get("out"):
+                    continue
+                if not text or text.startswith(MARKER):
+                    continue
+
+                now = time.time()
+                runs = [t for t in runs if now - t < WINDOW_SECONDS]
+                if len(runs) >= MAX_RUNS_PER_WINDOW:
+                    log(f"rate limit: {len(runs)} runs in {WINDOW_SECONDS}s, skipping {mid}")
+                    continue
+                runs.append(now)
+
+                log(f"dispatching message {mid} ({len(text)} chars)")
+                try:
+                    tid = ensure_thread(state)
+                    agent_post(f"v1/threads/{tid}/runs", {"message": text, "stream": False})
+                    log(f"run finished for {mid}")
+                except Exception as err:  # noqa: BLE001 - one bad run must not end the bridge
+                    log(f"run failed for {mid}: {err}")
+
+            time.sleep(POLL_SECONDS)
+
+
+    if __name__ == "__main__":
+        try:
+            main()
+        except KeyboardInterrupt:
+            sys.exit(0)
