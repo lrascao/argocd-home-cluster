@@ -22,7 +22,7 @@ spec:
         # No rollout happens when only the script changes, so pin the pod to
         # the ConfigMap's content. Update this when bridge.py changes, or the
         # old code keeps running against a new ConfigMap.
-        checksum/src: "bridge-py-v1"
+        checksum/src: "bridge-py-v2"
     spec:
       enableServiceLinks: false
       securityContext:

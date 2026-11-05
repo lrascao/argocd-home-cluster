@@ -153,6 +153,43 @@ data:
             return {"raw": raw[:400]}
 
 
+    def agent_get(path):
+        url = f"{CATALYST_URL}/v1.0/invoke/{AGENT}/method/{path.lstrip('/')}"
+        req = urllib.request.Request(url, headers={"dapr-api-token": CATALYST_TOKEN})
+        resp = urllib.request.urlopen(req, timeout=60)
+        try:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+        except ValueError:
+            return {}
+
+
+    # Anything else is still in flight.
+    RUNNING = {"running", "pending", "queued", "started", "in_progress"}
+
+
+    def settle_run(tid, deadline=120):
+        """The run's own terminal state, which is NOT what the POST tells you.
+
+        Posting a run returns 200 as soon as it is accepted, and the 200 has no
+        declared schema to read a result out of. A run whose LLM is unreachable
+        still answers 200 and then fails -- which this bridge originally logged
+        as "run finished", exactly the lie that costs an afternoon. So ask the
+        thread what became of its newest run.
+        """
+        stop = time.time() + deadline
+        state = None
+        while time.time() < stop:
+            runs = (agent_get(f"v1/threads/{tid}/runs") or {}).get("runs") or []
+            if not runs:
+                return None
+            newest = max(runs, key=lambda r: r.get("started_at") or "")
+            state = newest.get("state")
+            if state is None or str(state).lower() not in RUNNING:
+                return state
+            time.sleep(2)
+        return state or "unknown"
+
+
     def ensure_thread(state):
         """One agent thread per watched chat, so the agent remembers the
         question it asked. Without it, "2" in answer to "which milk?" arrives
@@ -228,7 +265,11 @@ data:
                 try:
                     tid = ensure_thread(state)
                     agent_post(f"v1/threads/{tid}/runs", {"message": text, "stream": False})
-                    log(f"run finished for {mid}")
+                    outcome = settle_run(tid)
+                    if outcome is not None and str(outcome).lower() != "completed":
+                        log(f"run for {mid} ended {outcome!r} -- the agent did not answer")
+                    else:
+                        log(f"run completed for {mid}")
                 except Exception as err:  # noqa: BLE001 - one bad run must not end the bridge
                     log(f"run failed for {mid}: {err}")
 

@@ -99,6 +99,15 @@ A ConfigMap change does not roll the pod. Bump `checksum/src` in
 `statefulset.yaml` in the same commit, or the old code keeps running against
 the new ConfigMap.
 
+## Reading the log
+
+`run completed` means the agent finished. `run for <id> ended 'failed'` means it
+did not, and the bridge found that out by asking the thread rather than by
+trusting the POST -- posting a run answers 200 as soon as it is accepted, and a
+run whose LLM is unreachable answers 200 and then fails. An earlier version
+logged that as success, which is worth remembering before trusting any
+"finished" line in a tool like this.
+
 ## Watching it
 
 ```bash
@@ -118,7 +127,7 @@ wedged poll as silence.
 - The cursor advances *before* the run, so a message that makes the agent fail
   is dropped rather than retried. Deliberate -- the alternative is a poison
   message re-invoking the agent forever -- but it means a failed run needs
-  re-asking.
+  re-asking. The log says which runs ended badly; those are the ones to re-ask.
 - `get_messages_after` is granted to nothing in Catalyst; the bridge talks to
   telegram-mcp directly with the bearer token. So Catalyst's tool grants do not
   constrain the bridge, only the agent. The server's `TELEGRAM_EXPOSED_TOOLS`
