@@ -18,11 +18,16 @@ local:
     # MEASURED on an L40S (2026-09-23), Qwen3-1.7B, against 29 tok/s for the
     # same model on the 8-vCPU CPU node:
     #
-    #                  Qwen3-1.7B        Qwen3-14B (27.5 GiB of weights)
-    #   1 request      167-173 tok/s     26 tok/s
-    #   8 concurrent   1,333 tok/s       190 tok/s
-    #   32 concurrent  3,556 tok/s       653 tok/s
-    #   KV cache       338,336 tokens    75,808 tokens
+    #                  1.7B BF16      14B BF16      32B AWQ (4-bit)
+    #   weights        3.4 GB         27.5 GiB      18.2 GiB
+    #   1 request      167-173 tok/s  26 tok/s      38 tok/s
+    #   8 concurrent   1,333 tok/s    190 tok/s     286 tok/s
+    #   32 concurrent  3,556 tok/s    653 tok/s     941 tok/s
+    #   KV cache       338,336 tok    75,808 tok    85,312 tok
+    #
+    # The 32B at 4-bit beats the 14B at BF16 on every line despite 2.3x the
+    # parameters, because it moves fewer bytes per token -- both sit at ~86%
+    # of the card's bandwidth ceiling. Choose a model here by its BYTES.
     #
     # Read the 14B column before choosing a model. Generation on this card is
     # memory-bandwidth-bound exactly as it is on the CPU node: the L40S moves
@@ -38,8 +43,12 @@ local:
       enabled: true
       # The CUDA image. Same vLLM version as the CPU one above; bump together.
       image: vllm/vllm-openai:v0.27.1
-      # Matches node.homelab/gpu, which cloud-init derives from nvidia-smi.
-      model: l40s
+      # Matches node.homelab/gpu, which cloud-init derives from nvidia-smi --
+      # the WHOLE sanitised name, not the card family. "NVIDIA L40S" gives
+      # l40s, but "NVIDIA H100 80GB HBM3" gives h100-80gb-hbm3, and a bare
+      # h100 here matches nothing: the pod sits Pending on a healthy node
+      # billed by the GPU-hour. Read the label off the node, do not guess it.
+      model: h100-80gb-hbm3
       count: 1
 
     # Qwen3-1.7B, stepped back DOWN from the 4B, and the reason is latency
