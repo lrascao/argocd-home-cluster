@@ -37,9 +37,80 @@ spec:
       securityContext:
         runAsNonRoot: true
         # Longhorn hands over a bare ext4 volume owned by root; fsGroup is what
-        # makes /data writable by the unprivileged uid both containers use.
+        # makes /data writable by the unprivileged uid these containers use.
         fsGroup: 65532
       initContainers:
+      # Lay down the source tree and its dependencies on /src, shared with
+      # every other container in the pod.
+      #
+      # This is deliberately NOT `uvx --from "telegram-mcp @ <url>"`, which is
+      # how polymarket-mcp installs its server. telegram_mcp ships an install
+      # provenance guard (telegram_mcp/install_guard.py): because the
+      # `telegram-mcp` name on PyPI belongs to an unrelated project, it refuses
+      # to start unless the installer recorded a git or file:// direct URL, or
+      # no distribution metadata exists at all. A plain archive install records
+      # PEP 610 `archive_info`, which it rejects -- the process exits with
+      # "Refusing to start" before reading any config. `uv sync` installs the
+      # project editably from this directory, so the recorded URL is
+      # file:///src and the guard resolves /src/pyproject.toml and is happy.
+      #
+      # The guard's other accepted path -- `pip install git+https://...` -- is
+      # not open to us: this image has no git (nor curl), which is also why the
+      # download below is python's urllib rather than a one-line fetch.
+      #
+      # --frozen installs exactly what upstream's committed uv.lock pins, so a
+      # restart in a year resolves the same tree. That is what replaces
+      # polymarket's --exclude-newer date here; there is no date to move.
+      - name: source
+        image: ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
+        workingDir: /src
+        command:
+        - sh
+        - -c
+        # The tarball is pinned by content, not just by tag: a moved tag, or a
+        # GitHub-side change in how it renders archives, fails the hash and the
+        # pod stays down rather than quietly running something else. Take the
+        # new hash from `sha256sum` of the archive when bumping the tag.
+        - |
+          set -eu
+          url=https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz
+          sha=24bbd0b46742cd16e1d5898112f0417481b7c2b24c8d94d02ce8e4c78a52e0ea
+          echo "fetching $url"
+          python3 -c 'import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], "/src/src.tar.gz")' "$url"
+          echo "$sha  /src/src.tar.gz" | sha256sum -c -
+          tar -xzf /src/src.tar.gz -C /src --strip-components=1
+          rm -f /src/src.tar.gz
+          # --no-dev leaves out black/flake8/pytest; --python pins the
+          # interpreter because UV_PYTHON_DOWNLOADS=never means uv must use the
+          # image's own, not reach for a managed build.
+          exec uv sync --frozen --no-dev --python /usr/local/bin/python3
+        env:
+        - name: UV_CACHE_DIR
+          value: /cache
+        - name: UV_PYTHON_DOWNLOADS
+          value: never
+        - name: HOME
+          value: /tmp
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 768Mi
+        securityContext:
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: src
+          mountPath: /src
+        - name: uv-cache
+          mountPath: /cache
+        - name: tmp
+          mountPath: /tmp
       # Turn the sealed session string into the file session the server runs
       # on. Two reasons not to just hand the server the string:
       #
@@ -61,9 +132,6 @@ spec:
         command:
         - sh
         - -c
-        # Keep the pin in step with the `mcp` container below. Harmless if it
-        # drifts -- a .session file is Telethon's format, not this project's --
-        # but bump both together anyway.
         - |
           set -eu
           if [ -f /data/telegram_mcp_session.session ]; then
@@ -71,9 +139,7 @@ spec:
             exit 0
           fi
           echo "no session file: migrating TELEGRAM_SESSION_STRING onto the volume"
-          exec uvx --exclude-newer "2026-11-05T00:00:00Z" \
-            --from "telegram-mcp @ https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz" \
-            telegram-mcp-migrate-session --target /data/telegram_mcp_session
+          exec /src/.venv/bin/telegram-mcp-migrate-session --target /data/telegram_mcp_session
         env:
         - name: TELEGRAM_API_ID
           valueFrom:
@@ -91,10 +157,6 @@ spec:
             secretKeyRef:
               name: telegram-mcp-auth
               key: TELEGRAM_SESSION_STRING
-        - name: UV_CACHE_DIR
-          value: /cache
-        - name: UV_PYTHON_DOWNLOADS
-          value: never
         - name: HOME
           value: /tmp
         resources:
@@ -111,37 +173,26 @@ spec:
           capabilities:
             drop: [ALL]
         volumeMounts:
+        - name: src
+          mountPath: /src
         - name: data
           mountPath: /data
-        # Shared with the `mcp` container, so the install it does here warms
-        # the cache that one reads a moment later in the same pod start.
-        - name: uv-cache
-          mountPath: /cache
         - name: tmp
           mountPath: /tmp
       containers:
-      # chigwell/telegram-mcp (Apache-2.0, Telethon over MTProto). Installed by
-      # uvx at start from a GitHub tag tarball, which means github.com must be
-      # reachable whenever the pod restarts -- the same bargain polymarket-mcp
-      # makes with PyPI.
+      # chigwell/telegram-mcp (Apache-2.0, Telethon over MTProto), run from the
+      # venv the `source` init container built. github.com must be reachable
+      # whenever the pod restarts -- the same bargain polymarket-mcp makes with
+      # PyPI. /src is an emptyDir on purpose: it is rebuilt from the pinned tag
+      # on every start, so the manifest is always what is running, rather than
+      # a stale tree surviving on the volume past a bump.
       #
-      # Not from PyPI on purpose: the `telegram-mcp` name there belongs to an
-      # unrelated project, and upstream says so. The tarball is a direct PEP
-      # 508 reference, so --exclude-newer only freezes the dependency
-      # resolution around it (telethon, mcp<2, pillow, pypdf); move the date
-      # together with the tag.
-      #
-      # The package metadata still reads 2.0.1 at tag v3.3.4 -- upstream does
-      # not bump pyproject.toml. Trust the tag, not `pip show`.
+      # The package metadata reads 2.0.1 at tag v3.3.4 -- upstream does not bump
+      # pyproject.toml. Trust the tag, not `pip show`.
       - name: mcp
         image: ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
         command:
-        - uvx
-        - --exclude-newer
-        - "2026-11-05T00:00:00Z"
-        - --from
-        - "telegram-mcp @ https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz"
-        - telegram-mcp
+        - /src/.venv/bin/telegram-mcp
         env:
         # Streamable HTTP at /mcp, on the pod's loopback: the auth container is
         # the one way in. There are no CLI flags for this, only these vars.
@@ -192,10 +243,6 @@ spec:
           value: homelab-catalyst-mcp
         - name: TZ
           value: Europe/Lisbon
-        - name: UV_CACHE_DIR
-          value: /cache
-        - name: UV_PYTHON_DOWNLOADS
-          value: never
         # Telethon and the MCP server write nothing here that matters: the
         # alias and incoming-feed state under $XDG_STATE_HOME is unused, since
         # set_contact_alias is pruned and TELEGRAM_EVENT_FEED is off.
@@ -204,9 +251,8 @@ spec:
         # Bound to loopback, so httpGet/tcpSocket probes (which dial the pod
         # IP) cannot see it; ask from inside the container instead.
         #
-        # Generous failureThreshold: a cold uv cache installs telethon, pillow
-        # and pypdf from GitHub and PyPI first, and node4's link negotiates at
-        # 100Mb. After that it still has to connect to Telegram -- an
+        # The install happens in an init container now, so this only has to
+        # cover importing telethon/pillow/pypdf and connecting to Telegram. An
         # unauthorized session fails here rather than serving, which is the
         # intended signal.
         startupProbe:
@@ -216,7 +262,7 @@ spec:
             - -c
             - import socket; socket.create_connection(("127.0.0.1", 8765), 2)
           periodSeconds: 5
-          failureThreshold: 60
+          failureThreshold: 36
         # Only proves the port is open. A wedged Telethon reconnect keeps
         # listening, so this will not catch it -- the logs will.
         livenessProbe:
@@ -243,10 +289,13 @@ spec:
           capabilities:
             drop: [ALL]
         volumeMounts:
+        # Read-only here: the guard re-reads /src/pyproject.toml at startup,
+        # but nothing in this container should be writing to the source tree.
+        - name: src
+          mountPath: /src
+          readOnly: true
         - name: data
           mountPath: /data
-        - name: uv-cache
-          mountPath: /cache
         - name: tmp
           mountPath: /tmp
       - name: auth
@@ -283,6 +332,10 @@ spec:
           mountPath: /etc/nginx/templates
           readOnly: true
       volumes:
+      # The source tree plus its .venv, rebuilt from the pinned tag on every
+      # pod start. Not on the PVC: see the note on the `mcp` container.
+      - name: src
+        emptyDir: {}
       - name: uv-cache
         emptyDir: {}
       - name: tmp

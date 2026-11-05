@@ -22,18 +22,29 @@ Unlike WhatsApp, this is not an unofficial client: MTProto is a documented
 Telegram API and third-party clients are expected. The account is not at risk
 of a ban for being here.
 
-## Four things about upstream that this deployment depends on
+## Five things about upstream that this deployment depends on
 
+- **It refuses to run from a plain archive install.** Because the
+  `telegram-mcp` name on PyPI belongs to an unrelated project, upstream ships
+  `telegram_mcp/install_guard.py`, which aborts with *"Refusing to start: ...
+  was not installed from an explicit source checkout"* before reading any
+  config. It accepts exactly three provenances, checked at every startup:
+  a PEP 610 `direct_url.json` recording a **git** URL (`vcs_info`), one
+  recording a **`file://`** path whose `pyproject.toml` still declares
+  `name = "telegram-mcp"`, or **no distribution metadata at all** (a source
+  tree run in place). `pip install "<name> @ https://...tar.gz"` records
+  `archive_info` and is rejected -- that is why the pod does not simply
+  `uvx --from <url>` the way polymarket-mcp does. `uv sync` in the extracted
+  tree gives the `file://` form; see the `source` init container.
 - **`TELEGRAM_SESSION_STRING` beats `TELEGRAM_SESSION_NAME`**, the opposite of
   what the upstream README says. `_discover_accounts()` in `runtime.py` tests
   the string first and only falls through to the file. So the string is scoped
   to the init container and must never be added to `mcp` -- with both set, the
   file session on the volume is silently ignored and every restart refetches
   the update backlog.
-- **Not from PyPI.** The `telegram-mcp` name on PyPI belongs to an unrelated
-  project. The install is a direct reference to the GitHub tag tarball, so
-  github.com must be reachable whenever the pod restarts -- the same bargain
-  polymarket-mcp makes with PyPI.
+- **github.com must be reachable whenever the pod restarts**, the same bargain
+  polymarket-mcp makes with PyPI. The tarball is pinned by sha256 as well as by
+  tag, so a moved tag fails closed instead of running something else.
 - **The package metadata lies.** `pyproject.toml` still reads `2.0.1` at tag
   `v3.3.4`; upstream does not bump it. `pip show` / `importlib.metadata` will
   say 2.0.1. Trust the tag in the manifest.
@@ -55,18 +66,19 @@ kubectl apply -f playbooks/kubernetes/cluster/argocd/manifests/project.yaml -f p
 
 ### Pre-flight the install
 
-The `uvx --from "<name> @ <url>"` form was checked with pip's equivalent, not
-with uv itself, so prove it on the cluster before the first sync rather than
-reading a crash-looping init container. This should install and then exit with
-`Error: No Telegram session configured`, which is the proof -- the tarball
-resolved and the console script ran:
+The `source` init container's exact sequence, in a throwaway pod, so the
+install guard and `uv sync --frozen` are proven before the first sync rather
+than read off a crash-looping init container. A **PASS ends in `Error: No
+Telegram session configured`** -- that means the guard let it through and only
+the (absent) session is missing. A FAIL says `Refusing to start`:
 
 ```bash
-kubectl -n default run uvx-preflight --rm -it --restart=Never --image=ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim --env=HOME=/tmp --env=UV_CACHE_DIR=/tmp/cache --env=UV_PYTHON_DOWNLOADS=never --command -- uvx --exclude-newer 2026-11-05T00:00:00Z --from "telegram-mcp @ https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz" telegram-mcp
+kubectl -n default run telegram-mcp-preflight --rm -i --restart=Never --image=ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim --env=HOME=/tmp --env=UV_CACHE_DIR=/tmp/cache --env=UV_PYTHON_DOWNLOADS=never --command -- sh -c 'set -eu; cd /tmp; python3 -c "import urllib.request;urllib.request.urlretrieve(\"https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz\",\"s.tgz\")"; echo "24bbd0b46742cd16e1d5898112f0417481b7c2b24c8d94d02ce8e4c78a52e0ea  s.tgz" | sha256sum -c -; mkdir -p src; tar -xzf s.tgz -C src --strip-components=1; cd src; uv sync --frozen --no-dev --python /usr/local/bin/python3; cat .venv/lib/python3*/site-packages/telegram_mcp-*.dist-info/direct_url.json; ./.venv/bin/telegram-mcp'
 ```
 
-If uv rejects that spelling, drop the `"<name> @ "` prefix and pass the URL to
-`--from` on its own; the executable is named after the package either way.
+The `direct_url.json` it prints should be a `file:///tmp/src` URL. If it is
+anything else the guard will reject it, and the install form needs fixing
+before this is worth syncing.
 
 ## Get API credentials
 
@@ -77,11 +89,13 @@ account, reusable forever. They are not a login on their own -- the session is.
 ## Generate the session string
 
 On the **personal** Mac (this is an account credential, like `ca/` -- see the
-two-Mac split). There is no `uv` here, so use a throwaway venv; the package
-installs cleanly from the tag tarball:
+two-Mac split). Install it from **git**, not from the tag tarball: the install
+guard above rejects an archive install, and a venv built that way fails with
+`Refusing to start` instead of asking for credentials. git records `vcs_info`
+(commit `0246df8c` for `v3.3.4`) and is accepted:
 
 ```bash
-python3 -m venv /tmp/tgsess && /tmp/tgsess/bin/pip -q install "telegram-mcp @ https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz"
+rm -rf /tmp/tgsess && python3 -m venv /tmp/tgsess && /tmp/tgsess/bin/pip -q install "git+https://github.com/chigwell/telegram-mcp.git@v3.3.4"
 ```
 
 ```bash
@@ -185,11 +199,16 @@ Tool names must be spelled out explicitly for the agent too, the same way
 
 ## Bumping
 
-The tag appears twice -- the `mcp` container's `uvx` args and the init
-container's inline script -- and both carry `--exclude-newer`, which freezes
-the dependency resolution around the pinned tarball (it resolved mcp 1.30.0,
-telethon 1.45.0, pillow 13.0.0 and pypdf 6.21.4 on 2026-11-05). Move the date
-together with the tag, in both places.
+The tag and its sha256 live in one place, the `source` init container's script.
+Dependencies are not date-pinned the way polymarket's are: `uv sync --frozen`
+installs exactly what upstream's committed `uv.lock` pins, so there is no
+`--exclude-newer` to move. Get the new hash before editing:
+
+```bash
+curl -sL https://github.com/chigwell/telegram-mcp/archive/refs/tags/<tag>.tar.gz | sha256sum
+```
+
+Re-run the pre-flight above with the new tag and hash, then roll it.
 
 Then re-check the surface, because the grant is pinned to tool names and the
 `read-only` split is upstream's annotation:
