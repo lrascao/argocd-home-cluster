@@ -208,9 +208,20 @@ local:
         # Switching structured-outputs backend does not help either -- the
         # bitmask is applied in vLLM's own worker code, above the backend.
         #
-        # With this off the same request fails safely, which is the point:
-        #   HTTP 400  tool_choice=function "Bash" requires --tool-call-parser
-        calling: false
+        # With this off the same request fails safely, which is the point --
+        # and MEASURED on the H100 on 2026-11-05, where the safe failure is
+        # what broke a Diagrid durable agent: every call it made carried tool
+        # definitions, so every call came back
+        #
+        #   HTTP 400  "auto" tool choice requires --enable-auto-tool-choice
+        #             and --tool-call-parser to be set
+        #
+        # ON, because the crash above is CPU-only by construction and the
+        # template now gates these flags on vllm.gpu.enabled as well as this
+        # toggle. A GPU-less deployment therefore still omits them and still
+        # fails safely; this says "tool calling is wanted", not "tool calling
+        # is safe everywhere".
+        calling: true
         # Model-specific, so it travels with the model above rather than with
         # the server flags. Kept set while calling is false: it is the right
         # value for Qwen3 and costs nothing until the gate opens.

@@ -168,11 +168,14 @@ spec:
             - --default-chat-template-kwargs
             - '{"enable_thinking": false}'
             {{- end }}
-            {{- if .Values.vllm.model.tool.calling }}
-            # Gated: this pair is what arms the crash documented in
-            # values.yaml. Enabling it on the CPU backend turns any emitted
-            # tool call into an engine death and a pod restart, so the gate
-            # stays shut until vllm#51283 closes.
+            {{- if and .Values.vllm.model.tool.calling .Values.vllm.gpu.enabled }}
+            # Gated on the BACKEND as well as the toggle, because vllm#51283
+            # is a CPU-only fault by construction: it dies complaining that
+            # pin_memory=True has no accelerator, which cannot be true here.
+            # Tying the flags to gpu.enabled means the toggle expresses intent
+            # once and the CPU variant stays safe when the GPU node is gone --
+            # rather than the toggle having to be flipped back by hand on the
+            # way down, which is the kind of step that gets missed.
             - --enable-auto-tool-choice
             - --tool-call-parser={{ .Values.vllm.model.tool.parser }}
             {{- end }}
