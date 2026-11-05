@@ -57,8 +57,15 @@ One secret, three keys: the Continente account's own email and password, and
 the bearer token Catalyst presents. The pod stays in
 `CreateContainerConfigError` until it exists. From the repo root:
 
+Read the two credentials in without putting them in the shell history
+(`read -r`/`-rs`, not `-p`, so this works in zsh as well as bash):
+
 ```bash
-read -rp 'Continente email: ' CONT_EMAIL && read -rsp 'Continente password: ' CONT_PW && echo && MCP_KEY=$(openssl rand -hex 32) && kubectl create secret generic continente-credentials --namespace continente-mcp --dry-run=client -o yaml --from-literal=CONTINENTE_EMAIL="$CONT_EMAIL" --from-literal=CONTINENTE_PASSWORD="$CONT_PW" --from-literal=MCP_API_KEY="$MCP_KEY" | kubeseal --controller-namespace kube-system --controller-name sealed-secrets-controller --format yaml > continente-mcp/sealed-secret.yaml && echo && echo "MCP_API_KEY=$MCP_KEY"
+echo -n 'Continente email: '; read -r CONT_EMAIL; echo -n 'Continente password: '; read -rs CONT_PW; echo
+```
+
+```bash
+MCP_KEY=$(openssl rand -hex 32) && kubectl create secret generic continente-credentials --namespace continente-mcp --dry-run=client -o yaml --from-literal=CONTINENTE_EMAIL="$CONT_EMAIL" --from-literal=CONTINENTE_PASSWORD="$CONT_PW" --from-literal=MCP_API_KEY="$MCP_KEY" | kubeseal --controller-namespace kube-system --controller-name sealed-secrets-controller --format yaml > continente-mcp/sealed-secret.yaml && unset CONT_PW && echo "MCP_API_KEY=$MCP_KEY"
 ```
 
 Put the account password and the printed `MCP_API_KEY` in vaultwarden before
