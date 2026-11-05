@@ -1,0 +1,124 @@
+# The bridge: takes go-whatsapp's webhooks, runs the Catalyst managed agent on
+# each chat's thread, and sends the answer back. Source and image are
+# ansible-local-network/services/whatsapp-bridge; its ./VERSION and the tag
+# below must agree.
+#
+# The Service exists only for the webhook from go-whatsapp next door. Nothing
+# outside the namespace needs it, and every request must carry the HMAC
+# signature anyway.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bridge
+  namespace: whatsapp-bridge
+  labels:
+    app: bridge
+spec:
+  type: ClusterIP
+  selector:
+    app: bridge
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bridge
+  namespace: whatsapp-bridge
+  labels:
+    app: bridge
+spec:
+  # One: each chat's messages are queued in this process, so the agent sees
+  # them in order and one run at a time. A second replica would race it.
+  replicas: 1
+  serviceName: bridge
+  selector:
+    matchLabels:
+      app: bridge
+  template:
+    metadata:
+      labels:
+        app: bridge
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # So the distroless nonroot user can write the volume.
+        fsGroup: 65532
+      containers:
+      - name: bridge
+        image: registry.88288338.xyz/whatsapp-bridge:0.1.0
+        env:
+        - name: WHATSAPP_URL
+          value: http://whatsapp:3000
+        # `bridge:<pw>`, the second account in APP_BASIC_AUTH.
+        - name: WHATSAPP_BASIC_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: BRIDGE_BASIC_AUTH
+        - name: WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: WEBHOOK_SECRET
+        # Project `test`'s Dapr HTTP endpoint in the homelab region. Pods
+        # resolve it through the house DNS to the ingress VIP, and contour
+        # passes the TLS through to the Catalyst gateway (see catalyst/).
+        - name: CATALYST_HTTP_ENDPOINT
+          value: https://http-prj14384718.e7tvfqjhulsxxzixrntfpe6mgzyny72w.r1.privatediagrid.net
+        # The App ID `whatsapp-bridge`'s token -- never the agent's own, which
+        # would also unlock the agent's state, secrets and model.
+        - name: CATALYST_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: CATALYST_API_TOKEN
+        - name: AGENT_APP_ID
+          value: whatsapp-agent
+        # Kept in the secret rather than here, so the numbers stay out of git.
+        - name: ALLOWED_SENDERS
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: ALLOWED_SENDERS
+        ports:
+        - name: http
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 30
+          failureThreshold: 4
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        # threads.json: which agent thread each chat is on. Losing it costs
+        # every chat its history with the agent, and nothing else.
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: longhorn
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi

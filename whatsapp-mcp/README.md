@@ -58,11 +58,15 @@ remove the device on the phone -- that works even if this cluster is gone.
 read -rs CATALYST_PW   # the `catalyst` password from vaultwarden
 diagrid mcpserver create whatsapp --project test --url http://whatsapp.whatsapp-mcp.svc.cluster.local:3000/mcp --header Authorization:"Basic $(printf 'catalyst:%s' "$CATALYST_PW" | base64)" --description "Luis's personal WhatsApp (go-whatsapp-web-multidevice)" --wait
 diagrid mcpserver tools list whatsapp --project test
-diagrid mcpserver access grant whatsapp --project test --caller agent1 --allow-tools whatsapp_chat
+diagrid mcpserver access grant whatsapp --project test --caller whatsapp-agent --allow-tools whatsapp_chat
 ```
 
 Then `kubectl -n prj-14384718 get mcpservers.dapr.io -o yaml` shows what the
 agent rendered, including whether the header became a `secretKeyRef`.
+
+`whatsapp-agent` is the only caller. Every other agent that needs WhatsApp
+asks it, as a teammate, rather than holding a grant here. It is defined, and
+its other grants are listed, in `whatsapp-bridge/README.md`.
 
 ### What to grant
 
@@ -72,7 +76,7 @@ names only, so a grant is all of a tool's actions or none of them:
 | Tool | Grant? | Why |
 | --- | --- | --- |
 | `whatsapp_chat` | yes | `list_chats`, `list_contacts`, `get_messages` -- and `archive` |
-| `whatsapp_send` | only for an agent that should send | also takes `scheduled_at` / `recurrence`, so it can set up messages that keep firing |
+| `whatsapp_send` | no | it sends as Luis, to anyone, and also takes `scheduled_at` / `recurrence`, so it can set up messages that keep firing. `whatsapp-agent` sends from its own number instead (`whatsapp-bridge/`) |
 | `whatsapp_schedule` | no | manages those scheduled sends |
 | `whatsapp_message` | no | `delete`, `revoke`, `edit`, plus `download_media` |
 | `whatsapp_app` | never | `logout` unlinks the device |

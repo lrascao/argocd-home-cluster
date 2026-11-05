@@ -1,0 +1,133 @@
+# go-whatsapp-web-multidevice linked to the AGENT's own number -- not Luis's,
+# which is the one in whatsapp-mcp. A second instance rather than a second
+# device on that one, so the webhook only ever carries messages sent to the
+# agent, and what the agent sends goes out from its own number, never as
+# Luis. Registered in Catalyst as MCPServer `whatsapp-agent-number`, with
+# whatsapp_send granted to whatsapp-agent and nothing to anyone else.
+#
+# ClusterIP only: its clients are the bridge and the MCPServer sidecar in
+# prj-14384718, and the dashboard is reached with `kubectl port-forward` (see
+# README.md). Basic auth is the only gate -- flannel enforces no
+# NetworkPolicy.
+apiVersion: v1
+kind: Service
+metadata:
+  name: whatsapp
+  namespace: whatsapp-bridge
+  labels:
+    app: whatsapp
+spec:
+  type: ClusterIP
+  selector:
+    app: whatsapp
+  ports:
+  - name: http
+    port: 3000
+    targetPort: http
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: whatsapp
+  namespace: whatsapp-bridge
+  labels:
+    app: whatsapp
+spec:
+  # One linked-device session, one process -- see whatsapp-mcp/statefulset.yaml
+  # for why a single-replica StatefulSet never gives the session two owners.
+  replicas: 1
+  serviceName: whatsapp
+  selector:
+    matchLabels:
+      app: whatsapp
+  # The volume holds the paired session; deleting it means scanning the QR
+  # code again.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        app: whatsapp
+    spec:
+      # The app reads WHATSAPP_* env vars, and the `whatsapp` Service would
+      # inject WHATSAPP_PORT=tcp://... into every pod here.
+      enableServiceLinks: false
+      containers:
+      - name: whatsapp
+        # Same image and pin as whatsapp-mcp; bump the two together.
+        image: aldinokemal2104/go-whatsapp-web-multidevice:v9.8.0@sha256:caec634771e3a60b55f0651a70594593d63fb9ae751492260608b81ee4fd4abf
+        args:
+        - rest
+        env:
+        - name: APP_PORT
+          value: "3000"
+        # `me:<pw>,bridge:<pw>,catalyst:<pw>` -- each has full control of the
+        # account.
+        - name: APP_BASIC_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: APP_BASIC_AUTH
+        # gowa-ui v1.8.0, as in whatsapp-mcp.
+        - name: APP_UI_ASSET_SHA256
+          value: 59e9fa617744b7745a4da6ea491ea1218135858e7a3236585e05e646b0db5d55
+        # The bridge only reads text, so nothing here needs the photos.
+        - name: WHATSAPP_AUTO_DOWNLOAD_MEDIA
+          value: "false"
+        # Every incoming message goes to the bridge, signed with the shared
+        # secret (X-Hub-Signature-256). Only `message` events: reactions,
+        # receipts and presence would be dropped there anyway.
+        - name: WHATSAPP_WEBHOOK
+          value: http://bridge:8080/webhook
+        - name: WHATSAPP_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: WEBHOOK_SECRET
+        - name: WHATSAPP_WEBHOOK_EVENTS
+          value: message
+        - name: TZ
+          value: Europe/Lisbon
+        ports:
+        - name: http
+          containerPort: 3000
+        # /health is outside basic auth and green before the QR code is
+        # scanned.
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          failureThreshold: 4
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 1Gi
+        volumeMounts:
+        - name: data
+          mountPath: /app/storages
+          subPath: storages
+        - name: data
+          mountPath: /app/statics
+          subPath: statics
+  # RWO, for the same SQLite reason as whatsapp-mcp.
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: longhorn
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 5Gi
