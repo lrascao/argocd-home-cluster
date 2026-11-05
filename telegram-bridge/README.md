@@ -1,8 +1,13 @@
 # telegram-bridge
 
-The trigger for `shopping-agent`. Watches Luis's **Saved Messages** chat and
+The trigger for `telegram-agent`. Watches Luis's **Saved Messages** chat and
 starts an agent run for anything he writes there. Ask for milk in that chat and
-the agent comes back asking which one.
+the answer comes back asking which one -- telegram-agent fields the message and
+hands the groceries to `shopping-agent` as a teammate, then relays its reply.
+
+It used to invoke `shopping-agent` directly. It no longer does, because
+telegram-agent is the only agent granted Telegram tools: a run against
+shopping-agent would now wake an agent with no way to answer in the chat.
 
 ~230 lines of standard-library Python in a ConfigMap, on `python:3.12-slim`.
 Nothing to build, nothing to install at start, no registry needed to come up.
@@ -39,8 +44,10 @@ Two defences:
 
 1. The agent is instructed to begin every Telegram message with 🛒, and the
    bridge skips anything starting with it. `AGENT_MARKER` here and the
-   instruction in `catalyst/shopping-agent.yaml` **must agree** -- change one
-   and change the other.
+   instruction in `catalyst/telegram-agent.yaml` **must agree** -- change one
+   and change the other. It stays the shopping cart even though telegram-agent
+   answers about anything: it is a loop marker, not a topic, and a prettier one
+   would buy nothing for the risk of the two drifting apart.
 2. `MAX_RUNS_PER_WINDOW` (8 per 120s). If the marker ever fails, this stops it
    running away before someone reads the log.
 
@@ -48,13 +55,23 @@ Two defences:
 
 ```
 Luis types in Saved Messages
-  → bridge: get_messages_after(chat_id=me, after_id=cursor)   [telegram-mcp, direct]
-  → bridge: POST /v1.0/invoke/shopping-agent/method/v1/threads/<id>/runs
-  → agent:  get_most_bought → asks "which milk?" via send_message
+  → bridge:    get_messages_after(chat_id=me, after_id=cursor)  [telegram-mcp, direct]
+  → bridge:    POST /v1.0/invoke/telegram-agent/method/v1/threads/<id>/runs
+  → tg-agent:  recognises groceries, calls the shopping-agent teammate tool
+  → shopping:  get_most_bought → returns "which milk? 1/2/3" to tg-agent
+  → tg-agent:  send_message "🛒 which milk? ..."
   → Luis answers in the same chat
-  → bridge dispatches it to the SAME thread, so the agent still has the question
-  → agent:  search_products → add_to_cart → get_cart → confirms → close_session
+  → bridge:    dispatches it to the SAME thread, so tg-agent still has the question
+  → tg-agent:  calls shopping-agent again, passing BOTH the options and his choice
+  → shopping:  search_products → add_to_cart → get_cart → close_session → reports back
+  → tg-agent:  send_message "🛒 added ..., total ..."
 ```
+
+The teammate tool is not something either agent declares. A DurableAgent's spec
+is only `goal`, `instructions`, `llmConfig` and `role`; Catalyst puts every
+other agent in the project into each agent's tool list itself, and injects the
+instructions that say so. `diagrid agent registry get telegram-agent --project
+test` shows what it actually ends up with.
 
 One agent thread per chat, kept on the volume. Without it, "2" in answer to
 "which milk?" arrives with no idea what the options were.
@@ -131,4 +148,7 @@ wedged poll as silence.
 - `get_messages_after` is granted to nothing in Catalyst; the bridge talks to
   telegram-mcp directly with the bearer token. So Catalyst's tool grants do not
   constrain the bridge, only the agent. The server's `TELEGRAM_EXPOSED_TOOLS`
-  still does.
+  still does. This is also why "telegram-agent is the only caller of the
+  telegram MCP" is true of Catalyst callers and not of the cluster: the bridge
+  has to read the chat to know there is anything to wake an agent for, and a
+  DurableAgent cannot poll on its own.

@@ -8,7 +8,7 @@ metadata:
   namespace: telegram-bridge
 data:
   bridge.py: |
-    """Telegram -> Catalyst shopping-agent trigger.
+    """Telegram -> Catalyst telegram-agent trigger.
 
     Watches Luis's Saved Messages chat and starts an agent run for anything he
     writes there. The agent answers in the same chat itself, through its own
@@ -37,7 +37,7 @@ data:
     MCP_TOKEN = os.environ["TELEGRAM_MCP_TOKEN"]
     CATALYST_URL = os.environ["CATALYST_URL"].rstrip("/")
     CATALYST_TOKEN = os.environ["CATALYST_API_TOKEN"]
-    AGENT = os.environ.get("AGENT_APPID", "shopping-agent")
+    AGENT = os.environ.get("AGENT_APPID", "telegram-agent")
     CHAT = os.environ.get("WATCH_CHAT", "me")
     # The agent is told to start every Telegram message with this. Its replies
     # land in the same chat and are outgoing too, so without this the bridge

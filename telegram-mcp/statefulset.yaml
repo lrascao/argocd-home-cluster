@@ -222,7 +222,9 @@ spec:
         # send_reaction, forward_*, delete_* and the setters all stay dropped.
         # This is the one tool that can put text in front of another person, so
         # it is also the one that turns anything the agent reads into something
-        # it could be talked into sending. Grant it to the shopping agent only.
+        # it could be talked into sending. Grant it to telegram-agent only --
+        # it is the one agent that owns the chat, and it sends on its teammates'
+        # behalf so none of them needs this.
         - name: TELEGRAM_EXPOSED_TOOLS
           value: read-only+send_message
         # The file session on the volume. Telethon appends `.session`, which is

@@ -22,7 +22,7 @@ spec:
         # No rollout happens when only the script changes, so pin the pod to
         # the ConfigMap's content. Update this when bridge.py changes, or the
         # old code keeps running against a new ConfigMap.
-        checksum/src: "bridge-py-v2"
+        checksum/src: "bridge-py-v3"
     spec:
       enableServiceLinks: false
       securityContext:
@@ -43,15 +43,22 @@ spec:
           value: http://telegram.telegram-mcp.svc.cluster.local:8080/mcp
         - name: CATALYST_URL
           value: https://http-prj14384718.e7tvfqjhulsxxzixrntfpe6mgzyny72w.r1.privatediagrid.net:443
+        # telegram-agent, not shopping-agent: it owns the Telegram chat, is the
+        # only agent on the team granted Telegram tools, and hands grocery work
+        # to shopping-agent as a teammate. Pointing this back at shopping-agent
+        # would wake an agent that can no longer answer in the chat.
         - name: AGENT_APPID
-          value: shopping-agent
+          value: telegram-agent
         # Saved Messages. The only chat that can drive the agent: nobody who
         # messages Luis's account can reach it from anywhere else.
         - name: WATCH_CHAT
           value: me
         # Must match the marker the agent is told to prefix its replies with
-        # (catalyst/shopping-agent.yaml). It is how the bridge tells Luis's
+        # (catalyst/telegram-agent.yaml). It is how the bridge tells Luis's
         # messages from the agent's own, since both are outgoing in this chat.
+        # Still the shopping cart, though telegram-agent answers about anything:
+        # it is a loop marker, not a topic, and changing it means changing both
+        # this and the instruction in the same commit.
         - name: AGENT_MARKER
           value: "🛒"
         - name: POLL_SECONDS
@@ -67,7 +74,7 @@ spec:
               name: telegram-bridge-auth
               key: TELEGRAM_MCP_TOKEN
         # The telegram-bridge AppId's own Catalyst API token, which is what
-        # lets it invoke shopping-agent.
+        # lets it invoke telegram-agent.
         - name: CATALYST_API_TOKEN
           valueFrom:
             secretKeyRef:
