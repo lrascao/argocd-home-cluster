@@ -1,0 +1,25 @@
+# ClusterIP only, like the other two MCP servers: Catalyst's MCPServer sidecar
+# runs in this cluster (prj-14384718) and dials
+# http://telegram.telegram-mcp.svc.cluster.local:8080/mcp. Only the auth
+# container's port is published; telegram-mcp itself listens on the pod's
+# loopback and nothing outside the pod can reach it.
+#
+# Flannel does not enforce NetworkPolicy (and the home-cluster AppProject
+# blacklists the kind anyway), so every pod in the cluster can open this port
+# -- the bearer token is the only gate.
+apiVersion: v1
+kind: Service
+metadata:
+  name: telegram
+  namespace: telegram-mcp
+  labels:
+    app: telegram
+spec:
+  type: ClusterIP
+  selector:
+    app: telegram
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP

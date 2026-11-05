@@ -1,0 +1,305 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: telegram
+  namespace: telegram-mcp
+  labels:
+    app: telegram
+spec:
+  # One session, one process. telegram_mcp takes a per-session lock
+  # (TELEGRAM_SESSION_LOCK=exclusive by default) and Telegram answers a second
+  # client on the same auth key with AuthKeyDuplicatedError, so a second
+  # replica would not just be wasteful, it would fight this one.
+  replicas: 1
+  # StatefulSets have no Recreate. With one replica, RollingUpdate already
+  # deletes the old pod and waits for it to be gone before creating the new
+  # one, so the session never has two owners.
+  serviceName: telegram
+  selector:
+    matchLabels:
+      app: telegram
+  # The default, spelled out: the volume holds the logged-in session. Losing it
+  # is survivable here (the init container re-derives it from the sealed
+  # session string, unlike whatsapp-mcp where it means scanning a QR again),
+  # but it also holds Telethon's update cursor and entity cache.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        app: telegram
+    spec:
+      # The app reads its config from TELEGRAM_* / MCP_* env vars, and Service
+      # links inject <SERVICE>_PORT=tcp://... for every Service in the
+      # namespace. Switch them off rather than relying on names not colliding.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        # Longhorn hands over a bare ext4 volume owned by root; fsGroup is what
+        # makes /data writable by the unprivileged uid both containers use.
+        fsGroup: 65532
+      initContainers:
+      # Turn the sealed session string into the file session the server runs
+      # on. Two reasons not to just hand the server the string:
+      #
+      #  - A string session carries the auth key but not Telethon's update
+      #    state or entity cache, so every restart refetches a backlog and
+      #    re-resolves every username. Upstream recommends a file session for
+      #    a long-running server.
+      #  - TELEGRAM_SESSION_STRING *wins over* TELEGRAM_SESSION_NAME in
+      #    runtime.py (_discover_accounts checks the string first) -- the
+      #    opposite of what the upstream README says. That is why the string is
+      #    scoped to this container and never appears on the `mcp` one: with
+      #    both set, the file on the volume would be silently ignored.
+      #
+      # Idempotent by hand, not by the migrator: `telegram-mcp-migrate-session`
+      # refuses to overwrite an existing destination and exits non-zero, which
+      # would crash-loop every restart after the first.
+      - name: session
+        image: ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
+        command:
+        - sh
+        - -c
+        # Keep the pin in step with the `mcp` container below. Harmless if it
+        # drifts -- a .session file is Telethon's format, not this project's --
+        # but bump both together anyway.
+        - |
+          set -eu
+          if [ -f /data/telegram_mcp_session.session ]; then
+            echo "session file present, nothing to migrate"
+            exit 0
+          fi
+          echo "no session file: migrating TELEGRAM_SESSION_STRING onto the volume"
+          exec uvx --exclude-newer "2026-11-05T00:00:00Z" \
+            --from "telegram-mcp @ https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz" \
+            telegram-mcp-migrate-session --target /data/telegram_mcp_session
+        env:
+        - name: TELEGRAM_API_ID
+          valueFrom:
+            secretKeyRef:
+              name: telegram-mcp-auth
+              key: TELEGRAM_API_ID
+        - name: TELEGRAM_API_HASH
+          valueFrom:
+            secretKeyRef:
+              name: telegram-mcp-auth
+              key: TELEGRAM_API_HASH
+        # Only here. See the note above.
+        - name: TELEGRAM_SESSION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: telegram-mcp-auth
+              key: TELEGRAM_SESSION_STRING
+        - name: UV_CACHE_DIR
+          value: /cache
+        - name: UV_PYTHON_DOWNLOADS
+          value: never
+        - name: HOME
+          value: /tmp
+        resources:
+          requests:
+            cpu: 20m
+            memory: 96Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        # Shared with the `mcp` container, so the install it does here warms
+        # the cache that one reads a moment later in the same pod start.
+        - name: uv-cache
+          mountPath: /cache
+        - name: tmp
+          mountPath: /tmp
+      containers:
+      # chigwell/telegram-mcp (Apache-2.0, Telethon over MTProto). Installed by
+      # uvx at start from a GitHub tag tarball, which means github.com must be
+      # reachable whenever the pod restarts -- the same bargain polymarket-mcp
+      # makes with PyPI.
+      #
+      # Not from PyPI on purpose: the `telegram-mcp` name there belongs to an
+      # unrelated project, and upstream says so. The tarball is a direct PEP
+      # 508 reference, so --exclude-newer only freezes the dependency
+      # resolution around it (telethon, mcp<2, pillow, pypdf); move the date
+      # together with the tag.
+      #
+      # The package metadata still reads 2.0.1 at tag v3.3.4 -- upstream does
+      # not bump pyproject.toml. Trust the tag, not `pip show`.
+      - name: mcp
+        image: ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
+        command:
+        - uvx
+        - --exclude-newer
+        - "2026-11-05T00:00:00Z"
+        - --from
+        - "telegram-mcp @ https://github.com/chigwell/telegram-mcp/archive/refs/tags/v3.3.4.tar.gz"
+        - telegram-mcp
+        env:
+        # Streamable HTTP at /mcp, on the pod's loopback: the auth container is
+        # the one way in. There are no CLI flags for this, only these vars.
+        - name: MCP_TRANSPORT
+          value: http
+        - name: MCP_HOST
+          value: 127.0.0.1
+        - name: MCP_PORT
+          value: "8765"
+        # DNS rebinding protection is off while this is unset. Turn it on and
+        # allow exactly what nginx forwards as Host ($proxy_host). Belt and
+        # braces: the listener is already loopback-only.
+        - name: MCP_ALLOWED_HOSTS
+          value: 127.0.0.1:*
+        # The outer bound on what this server can do at all: `read-only` keeps
+        # only the 65 tools annotated readOnlyHint=True and drops the other 82
+        # -- every send_*, delete_*, edit_*, ban_*, join/leave, the profile and
+        # privacy setters, and download_media. The Catalyst grant narrows it
+        # further; this makes the pruned half unreachable even if a grant is
+        # widened by accident. An unknown value here is a startup error, not a
+        # silently different surface.
+        - name: TELEGRAM_EXPOSED_TOOLS
+          value: read-only
+        # The file session on the volume. Telethon appends `.session`, which is
+        # the name the init container wrote.
+        - name: TELEGRAM_SESSION_NAME
+          value: /data/telegram_mcp_session
+        - name: TELEGRAM_API_ID
+          valueFrom:
+            secretKeyRef:
+              name: telegram-mcp-auth
+              key: TELEGRAM_API_ID
+        - name: TELEGRAM_API_HASH
+          valueFrom:
+            secretKeyRef:
+              name: telegram-mcp-auth
+              key: TELEGRAM_API_HASH
+        # transcribe_voice is read-only, so it survives the pruning above, but
+        # its default engine wants a GROQ_API_KEY and `auto` would ship voice
+        # notes from private chats to a third party. Off also means no
+        # plaintext transcript cache on the volume.
+        - name: TELEGRAM_TRANSCRIBE
+          value: "off"
+        # How this shows up under Settings -> Devices on the phone, which is
+        # also where it gets revoked. Without it Telethon reports the host
+        # platform and the entry is unidentifiable.
+        - name: TELEGRAM_DEVICE_MODEL
+          value: homelab-catalyst-mcp
+        - name: TZ
+          value: Europe/Lisbon
+        - name: UV_CACHE_DIR
+          value: /cache
+        - name: UV_PYTHON_DOWNLOADS
+          value: never
+        # Telethon and the MCP server write nothing here that matters: the
+        # alias and incoming-feed state under $XDG_STATE_HOME is unused, since
+        # set_contact_alias is pruned and TELEGRAM_EVENT_FEED is off.
+        - name: HOME
+          value: /tmp
+        # Bound to loopback, so httpGet/tcpSocket probes (which dial the pod
+        # IP) cannot see it; ask from inside the container instead.
+        #
+        # Generous failureThreshold: a cold uv cache installs telethon, pillow
+        # and pypdf from GitHub and PyPI first, and node4's link negotiates at
+        # 100Mb. After that it still has to connect to Telegram -- an
+        # unauthorized session fails here rather than serving, which is the
+        # intended signal.
+        startupProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - import socket; socket.create_connection(("127.0.0.1", 8765), 2)
+          periodSeconds: 5
+          failureThreshold: 60
+        # Only proves the port is open. A wedged Telethon reconnect keeps
+        # listening, so this will not catch it -- the logs will.
+        livenessProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - import socket; socket.create_connection(("127.0.0.1", 8765), 2)
+          periodSeconds: 30
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 50m
+            memory: 160Mi
+          limits:
+            # pillow and pypdf are imported at start, and the entity-cache warm
+            # pulls every dialog once.
+            memory: 768Mi
+        securityContext:
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: uv-cache
+          mountPath: /cache
+        - name: tmp
+          mountPath: /tmp
+      - name: auth
+        image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+        env:
+        - name: MCP_BEARER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: telegram-mcp-auth
+              key: MCP_BEARER_TOKEN
+        ports:
+        - name: http
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 64Mi
+        # Runs as the image's own user (101). It renders the template into
+        # /etc/nginx/conf.d at start, which is nginx:root 775 -- a pod-wide
+        # runAsUser would leave it unwritable.
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: auth-template
+          mountPath: /etc/nginx/templates
+          readOnly: true
+      volumes:
+      - name: uv-cache
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: auth-template
+        configMap:
+          name: telegram-mcp-auth
+  # RWO on Longhorn: a real block device with ext4 under Telethon's SQLite
+  # session. Longhorn RWX would put an NFS share-manager in front, which is the
+  # arrangement SQLite corrupts under (see vaultwarden).
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: longhorn
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
