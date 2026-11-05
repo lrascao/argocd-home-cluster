@@ -56,7 +56,7 @@ spec:
             --streamableHttpPath /mcp \
             --port 8000 \
             --stateful \
-            --sessionTimeout 900000 \
+            --sessionTimeout 180000 \
             --healthEndpoint /healthz \
             --logLevel info
         env:
@@ -119,15 +119,20 @@ spec:
             path: /healthz
             port: http
           periodSeconds: 10
-        # One headless Chromium peaked at 551Mi in this cluster. --stateful
-        # gives each MCP session a child of its own, so the limit carries two
-        # or three of them; --sessionTimeout above reaps the idle ones.
+        # One headless Chromium peaked at 551Mi in this cluster, and --stateful
+        # gives every MCP session a child -- and a browser -- of its own. This
+        # was OOMKilled at 2Gi once five sessions were left open at the same
+        # time, which takes the whole pod down and with it every other
+        # session, so the ceiling carries roughly five and --sessionTimeout
+        # above reaps an idle one after three minutes rather than fifteen.
+        # A reaped session costs a client nothing but a new initialize: the
+        # cookie jar is on the volume, so no login is repeated.
         resources:
           requests:
             cpu: 200m
             memory: 512Mi
           limits:
-            memory: 2Gi
+            memory: 3Gi
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

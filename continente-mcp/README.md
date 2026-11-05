@@ -36,8 +36,16 @@ is no nginx sidecar here -- unlike polymarket-mcp, which needed one.
 
 It runs `--stateful`. In the stateless mode each HTTP POST gets a child
 process of its own, which here means a fresh Node and a cold Chromium per tool
-call. Stateful gives each MCP session one child, reaped after 15 minutes idle
-(`--sessionTimeout`).
+call. Stateful gives each MCP session one child, reaped after three minutes
+idle (`--sessionTimeout`).
+
+That timeout is a memory control, not a nicety. Every session holds a browser
+of about 550Mi, and the pod was OOMKilled at a 2Gi ceiling with five sessions
+open at once -- which drops every other session with it. Three minutes and a
+3Gi ceiling carry roughly five concurrent sessions. A reaped session costs a
+client only a new `initialize`, since the cookie jar on the volume means no
+login is repeated; a client that calls `close_session` when it is done frees
+its browser immediately, and agents should.
 
 ## Before the first sync
 
