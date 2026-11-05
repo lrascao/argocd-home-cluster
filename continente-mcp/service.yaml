@@ -1,0 +1,21 @@
+# ClusterIP only: Catalyst's MCPServer sidecar runs in this cluster and dials
+# http://continente-mcp.continente-mcp.svc.cluster.local:8000/mcp. Unlike
+# polymarket-mcp there is no nginx in front -- supergateway does the bearer
+# check itself (SUPERGATEWAY_API_KEY), and it registers /healthz ahead of that
+# check, so probes work without the key while /mcp does not.
+apiVersion: v1
+kind: Service
+metadata:
+  name: continente-mcp
+  namespace: continente-mcp
+  labels:
+    app: continente-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: continente-mcp
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http
+    protocol: TCP

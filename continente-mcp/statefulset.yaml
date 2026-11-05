@@ -1,0 +1,165 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: continente-mcp
+  namespace: continente-mcp
+  labels:
+    app: continente-mcp
+spec:
+  serviceName: continente-mcp
+  # One replica, for two independent reasons: the cookie cache is a single RWO
+  # volume, and supergateway keeps each streamable-HTTP session (and the child
+  # process behind it) in memory, so a second replica behind the Service would
+  # answer half the calls with an unknown session.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: continente-mcp
+  template:
+    metadata:
+      labels:
+        app: continente-mcp
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        # pwuser, the Playwright image's own non-root user. fsGroup so the
+        # cookie volume is writable by it.
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      # davidmarqu3s/continente-mcp: 9 tools over Continente.pt, driven with a
+      # real Chromium through Playwright. It speaks stdio only, so
+      # supergateway puts streamable HTTP in front of it in the same process
+      # tree -- see README.md for why both are installed at start rather than
+      # baked into an image.
+      - name: mcp
+        image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+        command: ["bash", "-lc"]
+        # Every version is exact, and playwright's is the load-bearing one:
+        # continente-mcp asks for ^1.59.1, so a plain install resolves to
+        # whatever is newest and then looks for a Chromium build this image
+        # does not carry ("Please update docker image as well"). Pinning it to
+        # the image's own Playwright version is what keeps the two in step --
+        # move both together when bumping.
+        args:
+        - |
+          set -euo pipefail
+          npm install --no-fund --no-audit --loglevel=error --prefix /tmp/app \
+            continente-mcp@4.1.1 \
+            playwright@1.64.1 \
+            supergateway@4.2.1
+          exec node /tmp/app/node_modules/supergateway/dist/index.js \
+            --stdio "node /tmp/app/node_modules/continente-mcp/src/index.js" \
+            --outputTransport streamableHttp \
+            --streamableHttpPath /mcp \
+            --port 8000 \
+            --stateful \
+            --sessionTimeout 900000 \
+            --healthEndpoint /healthz \
+            --logLevel info
+        env:
+        # The image ships the browsers here; the npm-installed playwright
+        # reads the same variable to find them.
+        - name: PLAYWRIGHT_BROWSERS_PATH
+          value: /ms-playwright
+        # Root is read-only, so both npm's cache and HOME go to the tmp
+        # volume. Chromium puts its profile under HOME too.
+        - name: HOME
+          value: /tmp
+        - name: npm_config_cache
+          value: /tmp/.npm
+        # cookies.json lands here, on the volume, so a restart reuses the
+        # session instead of driving the login form (and its verification
+        # widget) again.
+        - name: CONTINENTE_STATE_DIR
+          value: /state
+        - name: CONTINENTE_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: continente-credentials
+              key: CONTINENTE_EMAIL
+        - name: CONTINENTE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: continente-credentials
+              key: CONTINENTE_PASSWORD
+        # The bearer token Catalyst presents. Passed by environment, not
+        # --apiKey, so it stays out of the process arguments. supergateway
+        # refuses to start if this is set but empty, rather than listening
+        # with no authentication at all.
+        - name: SUPERGATEWAY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: continente-credentials
+              key: MCP_API_KEY
+        ports:
+        - name: http
+          containerPort: 8000
+        # Generous: the npm install happens on every start, so the first
+        # listen waits on the registry (5s x 60 = 5min).
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 5
+          failureThreshold: 60
+        # The default --healthCheck gateway, which answers while the gateway
+        # is listening. The `server` mode would start an MCP child on every
+        # check; here that is a Node process per probe, so it stays off.
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 30
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+        # One headless Chromium peaked at 551Mi in this cluster. --stateful
+        # gives each MCP session a child of its own, so the limit carries two
+        # or three of them; --sessionTimeout above reaps the idle ones.
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        # No seccomp or SYS_ADMIN exception: tested in this cluster, Chromium
+        # brings up its own sandbox under these settings, so the code's plain
+        # chromium.launch({ headless: true }) needs no --no-sandbox.
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: shm
+          mountPath: /dev/shm
+        - name: state
+          mountPath: /state
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      # Chromium's default /dev/shm in a container is 64Mi, which it outgrows
+      # on heavier pages and then crashes in ways Playwright reports as a lost
+      # browser process.
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 512Mi
+  volumeClaimTemplates:
+  - metadata:
+      name: state
+    spec:
+      storageClassName: longhorn
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
