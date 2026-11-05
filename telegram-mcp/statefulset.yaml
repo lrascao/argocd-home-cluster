@@ -214,8 +214,17 @@ spec:
         # further; this makes the pruned half unreachable even if a grant is
         # widened by accident. An unknown value here is a startup error, not a
         # silently different surface.
+        #
+        # `+send_message` re-registers exactly one of those 82, so the shopping
+        # agent can answer on Telegram -- it has to ask which milk, and a tool
+        # the server never registers is one no grant can reach. The additive
+        # form is deliberate over a plain write mode: send_file, send_album,
+        # send_reaction, forward_*, delete_* and the setters all stay dropped.
+        # This is the one tool that can put text in front of another person, so
+        # it is also the one that turns anything the agent reads into something
+        # it could be talked into sending. Grant it to the shopping agent only.
         - name: TELEGRAM_EXPOSED_TOOLS
-          value: read-only
+          value: read-only+send_message
         # The file session on the volume. Telethon appends `.session`, which is
         # the name the init container wrote.
         - name: TELEGRAM_SESSION_NAME

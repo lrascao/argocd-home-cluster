@@ -5,12 +5,24 @@ Telethon over MTProto) linked to Luis's personal Telegram account as a device,
 serving MCP (streamable HTTP) at `/mcp` for the Catalyst agents. Pinned to tag
 `v3.3.4`.
 
-**Read-only.** `TELEGRAM_EXPOSED_TOOLS=read-only` keeps the 65 tools annotated
-`readOnlyHint=True` out of the 147 registered and drops the other 82 -- every
-`send_*`, `delete_*`, `edit_*`, `ban_*`, `join`/`leave`, the profile and
-privacy setters, `forward_*` and `download_media`. That is the outer bound: the
-Catalyst grant narrows it further, but a widened grant still cannot reach a
-tool the server never registered.
+**Read-only, plus `send_message`.** `TELEGRAM_EXPOSED_TOOLS=read-only` keeps
+the 65 tools annotated `readOnlyHint=True` out of the 147 registered and drops
+the other 82 -- every `send_*`, `delete_*`, `edit_*`, `ban_*`, `join`/`leave`,
+the profile and privacy setters, `forward_*` and `download_media`. That is the
+outer bound: the Catalyst grant narrows it further, but a widened grant still
+cannot reach a tool the server never registered.
+
+The value is `read-only+send_message`, which re-registers exactly one of those
+82. The shopping agent needs it: asked for "milk" it has to come back and ask
+which of the three Luis buys, and it answers in the same chat. The additive
+form is deliberate -- `send_file`, `send_album`, `send_reaction`, `forward_*`,
+`delete_*` and the setters stay dropped, so the server's surface grows by one
+tool and not by a mode.
+
+`send_message` is the one tool here that can put text in front of another
+person, which makes it the one that turns anything the agent reads into
+something it could be talked into sending. Grant it to the shopping agent and
+nothing else.
 
 One pod, two containers plus an init container. `mcp` runs the server with
 `uvx` on the pod's loopback; `auth` is nginx on `:8080`, the only published
@@ -157,9 +169,10 @@ agent rendered, including whether the header became a `secretKeyRef`.
 
 ### What to grant
 
-65 tools is too many to hand an agent, and naming them all would also
+66 tools is too many to hand an agent, and naming them all would also
 auto-grant anything a later tag adds. Grant the chat-reading subset and widen
-deliberately:
+deliberately -- `send_message` is not in this list, and belongs only to an
+agent that is meant to answer:
 
 ```bash
 diagrid mcpserver access grant telegram --project test --caller agent1 --allow-tools get_me,list_chats,get_chat,get_history,get_messages,list_messages,search_messages,search_global,get_message_context,list_contacts,search_contacts,get_direct_chat_by_contact,get_last_interaction
@@ -183,10 +196,12 @@ Tool names must be spelled out explicitly for the agent too, the same way
 
 ## Risks this does not solve
 
-- Anyone who can message the account can put text in front of the agent.
-  Read-only means an injected instruction cannot send anything *from this
-  server*, but the agent has other tools: whatsapp-mcp can send. Treat anything
-  read here as untrusted input to the whole agent, not just to this server.
+- Anyone who can message the account can put text in front of the agent, and
+  with `send_message` granted this server can now answer them. An injected
+  instruction that gets the agent to send is an exfiltration path out of
+  whatever else that agent can read -- Continente order history, other chats --
+  and whatsapp-mcp can send too. Treat anything read here as untrusted input to
+  the whole agent, and grant `send_message` only where a reply is the point.
 - The volume is in Longhorn's `default` group, so the nightly 02:00 UTC S3
   backup carries the session file. Anyone with that bucket can restore a
   working logged-in device until it is revoked on the phone. The same is true
