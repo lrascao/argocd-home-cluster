@@ -143,11 +143,26 @@ spec:
             - "8000"
             - --max-model-len
             - {{ .Values.vllm.model.maxLen | quote }}
+            {{- if .Values.vllm.gpu.enabled }}
+            # auto on the GPU, so the checkpoint's own quantization_config
+            # decides. Hardcoding bfloat16 here was correct while the only
+            # GPU model was AWQ -- int4 weights with bf16 activations -- and
+            # becomes a contradiction the moment the checkpoint is FP8, which
+            # wants fp8 weights with bf16 activations chosen by vLLM rather
+            # than overridden from outside.
+            #
+            # Stated as `auto` rather than omitted, which would have the same
+            # effect, to keep this file's habit of writing the load-bearing
+            # defaults down instead of inheriting them silently.
+            - --dtype
+            - auto
+            {{- else }}
             # BF16 is the CPU backend's native dtype on AVX-512 and what
             # avx512_vnni accelerates. Stated rather than defaulted so a
             # change of base image cannot quietly change the arithmetic.
             - --dtype
             - bfloat16
+            {{- end }}
             # On by default in the V1 engine, and stated anyway because this is
             # the single load-bearing latency setting on a CPU backend rather
             # than an optimisation. Prefill runs at ~148 tok/s here, so whether
@@ -271,7 +286,11 @@ spec:
           emptyDir:
             # Sized for the weights of the largest model this chart serves,
             # not the current one: the pod is evicted when it overruns, mid
-            # download, with no other warning. A 32B at 4-bit is ~19 GB.
+            # download, with no other warning. Qwen3.5-35B-A3B at FP8 is
+            # 34.9 GiB, so the old `default 40` left 5 GiB of slack --
+            # values.yaml now sets weightsVolumeGi explicitly, and the
+            # ephemeral-storage limit above bounds these same bytes a second
+            # time. Both have to move together.
             sizeLimit: {{ .Values.vllm.weightsVolumeGi | default 40 }}Gi
         - name: dshm
           emptyDir:
