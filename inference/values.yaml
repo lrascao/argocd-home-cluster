@@ -116,88 +116,59 @@ local:
     # Do not lower maxLen to make room. That is the knob that failed first
     # here and it fails as a 500 per request, not as an OOM.
     model:
-      # GPU-ONLY. This checkpoint is 34.9 GiB and cannot load on the CPU
-      # backend at all -- the CloudNative node has 23.3 GiB allocatable, and
-      # vLLM's CPU backend has no FP8 path. Flipping gpu.enabled to false
-      # therefore needs this block reverted too, to a model the CPU node can
-      # serve:
+      # Qwen3-32B, AWQ 4-bit (18.0 GiB) -- chosen over the FP8 build (~33 GB)
+      # for the reason the 14B measurement exposed: generation here is
+      # bandwidth-bound, so halving the bytes per token is what buys speed.
+      # L40S at ~864 GB/s over ~19 GB puts the ceiling near 45 tok/s, against
+      # 26 measured for the 14B in BF16. vLLM detects AWQ from the model's
+      # own config; no quantization flag is needed.
       #
-      #   name: Qwen/Qwen3-1.7B    servedName: qwen3-1.7b    maxLen: 40960
+      # STAYING HERE DELIBERATELY, 2026-11-05, after costing out the step up.
+      # The workload is tool dispatch on short prompts -- shopping lists via
+      # continente-mcp, market reads via polymarket-mcp, replies via
+      # whatsapp-mcp -- so the model picks one of ~17 tools, fills its
+      # parameters and says one sentence. A 32B is already past what that
+      # needs, every failure on this path so far has been plumbing rather
+      # than capability, and continente-mcp drives a real logged-in browser
+      # session, which makes a silently-dropped tool call the expensive
+      # failure. A newer model re-opens exactly that risk for a quality gain
+      # nothing here would notice.
       #
-      # That coupling is unenforced and is the one real wart in this file --
-      # everything else the toggle touches (image, tool flags, the two CPU
-      # env vars) follows gpu.enabled in the template. The fix is to move
-      # these three under gpu: the way image already is; until then, read
-      # this paragraph before flipping the toggle down.
+      # What was evaluated, with real safetensors sizes, against 74.5 GiB of
+      # H100 -- keep this list, the sizes are the hard part:
       #
-      # Qwen3.5-35B-A3B, FP8 (34.9 GiB of safetensors, measured from the
-      # repo rather than estimated). Three reasons, in order:
+      #   Qwen/Qwen3.8-27B-FP8                28.7 GiB  newest dense
+      #   Qwen/Qwen3.5-35B-A3B-FP8            34.9 GiB  hybrid MoE, 3B active
+      #   cyankiwi/...Next-80B-A3B-AWQ-4bit   45.9 GiB  community quant
+      #   Qwen/Qwen3.5-122B-A10B-GPTQ-Int4    73.4 GiB  DOES NOT FIT: weights
+      #                                                 alone leave no KV
+      #   Qwen/Qwen3-235B-A22B-Instruct-2507-FP8  220.2 GiB  ~3 cards
       #
-      #  * FP8, not 4-bit, because of the H100 kernel ceiling documented
-      #    above. Hopper runs FP8 on tensor cores with no dequantisation
-      #    step; AWQ int4 capped the same card at 45% of its bandwidth.
-      #  * 3B active parameters out of 35B. The bytes-per-token argument
-      #    that chose a 32B over a 14B points here much harder: a sparse MoE
-      #    reads 8 of 256 experts per layer per token.
-      #  * 20 KiB/token of KV against the 32B's 256 KiB -- see maxLen.
+      # Note there is no dense Qwen3 above 32B -- this IS the top of that
+      # line, and Qwen has since moved to 3.5/3.6/3.8 where the dense
+      # flagship came DOWN to 27B. vLLM 0.27.1 already registers
+      # Qwen3_5MoeForConditionalGeneration, so the pinned image could serve
+      # any of them without a bump.
       #
-      # NOT a bump within Qwen3: 32B is the top of the Qwen3 DENSE line and
-      # there is nothing between it and the 235B-A22B (220 GiB at FP8, ~3
-      # cards). Qwen3's own MoE options are a 30B-A3B, which is a step down,
-      # and Qwen3-Next-80B-A3B, whose only fitting build is a community AWQ
-      # at 45.9 GiB. Qwen has since shipped 3.5, 3.6 and 3.8, where the dense
-      # flagship came DOWN to 27B and the growth went into MoE. Alternatives
-      # that fit one 80GB card, if this one disappoints:
+      # IF THIS EVER CHANGES, the tool parser changes with it in the same
+      # edit -- see the parser note below. Qwen3.5 wants qwen3_xml, the exact
+      # opposite of this checkpoint's answer, and getting it wrong is an
+      # HTTP 200 with the call as plain text.
       #
-      #   Qwen/Qwen3.8-27B-FP8            28.7 GiB  dense, newest, no MoE risk
-      #   Qwen/Qwen3.5-122B-A10B-GPTQ-Int4  73.4 GiB  DOES NOT FIT -- the card
-      #                                     is 74.5 GiB, so the weights alone
-      #                                     leave nothing for a KV cache.
-      #                                     Needs count: 2 and TP=2.
-      #
-      # vLLM 0.27.1 (released 2026-08-11) already registers
-      # Qwen3_5MoeForConditionalGeneration, so the pinned image serves this
-      # without a bump -- Qwen reused the 3.5 architecture for 3.6 and 3.8,
-      # which is why even an August checkpoint loads here. Verified against
-      # the registry at tag v0.27.1, not assumed.
-      #
-      # Two things to watch on first start, both unmeasured:
-      #  * It is a VL checkpoint (vision_config present,
-      #    *ForConditionalGeneration). Text-only use is fine, but vLLM's
-      #    multimodal profiling reserves memory for the largest image input
-      #    it will accept. If that eats the KV budget, the lever is
-      #    --limit-mm-per-prompt, deliberately NOT set here untested.
-      #  * Quantised-MoE kernels at batch 1 are the same class of unknown
-      #    that the AWQ ceiling turned out to be. Benchmark before believing
-      #    any projection -- including the ones in this file.
-      name: Qwen/Qwen3.5-35B-A3B-FP8
+      # The more interesting experiment for this workload is DOWNWARD: a
+      # 9B-class model from the 3.5 generation would be a fraction of the
+      # bytes and several times faster, and 17-way tool dispatch on short
+      # prompts is unlikely to notice. Untested.
+      name: Qwen/Qwen3-32B-AWQ
       # CLIENT-VISIBLE CONTRACT. This is the OpenAI model id, so every caller
-      # that names it 404s until it is updated too. Known callers:
-      # the Diagrid agent (diagrid managed-agent update agent1 --llm-model)
-      # and Home Assistant's openai_conversation model field.
-      servedName: qwen3-5-35b-a3b-fp8
-      # 262144 -- the model's own max_position_embeddings, so this is still
-      # the ceiling rather than a choice. It was 40960, which was Qwen3-32B's
-      # ceiling; the 6.4x comes from the model, not from a decision.
-      #
-      # This is the change that actually retires the problem below rather
-      # than living with it, and it is affordable only because the 3.5 MoE is
-      # a HYBRID: 40 layers, full_attention_interval 4, so just 10 layers
-      # carry a KV cache at all. The other 30 are linear attention and hold a
-      # fixed-size recurrent state per sequence instead of growing per token.
-      #
-      #   2 (K,V) x 10 full layers x 2 kv-heads x 256 head-dim x 2 B (bf16)
-      #     = 20,480 B = 20 KiB per token
-      #
-      # against Qwen3-32B's 2 x 64 x 8 x 128 x 2 = 256 KiB. That arithmetic is
-      # trustworthy because it was checked against a real cache: 211,552
-      # tokens x 256 KiB = 51.6 GiB, which is what vLLM reported on the H100
-      # after 18.0 GiB of weights at the default 0.9 utilisation.
-      #
-      # So the budget here: 0.9 x 80 GB = 67.0 GiB, minus 34.9 GiB of weights
-      # = 32.2 GiB of KV = ~1.68 MILLION tokens, of which one full-length
-      # 262,144-token sequence is 5.0 GiB. Six concurrent maximum-length
-      # requests still fit. On the 32B this number was 211,552 tokens total.
+      # that names it 404s if it changes -- Home Assistant's
+      # openai_conversation model field and
+      # `diagrid managed-agent update agent1 --llm-model`.
+      servedName: qwen3-32b-awq
+      # 40960 -- the model's own max_position_embeddings, so this is the
+      # ceiling rather than a choice. NOT a leftover: this checkpoint reports
+      # max_position_embeddings=40960 and vLLM REFUSES TO START above it, so
+      # the 262144 that suited the 3.5 MoE is a startup failure here.
       #
       # It was 8192, which is plenty for a chat client and nowhere near enough
       # for an agentic one. Claude Code sends its system prompt and tool
@@ -209,28 +180,30 @@ local:
       #   maximum context length is 8192 tokens. However, you requested 8192
       #   output tokens and your prompt contains 129497 characters
       #
-      # Raising this is not free on the CPU backend -- see kvCacheSpaceGiB
-      # below, which has to move with it there, and the prefill cost noted in
-      # the plan doc. On the GPU the KV cache comes out of VRAM via
-      # --gpu-memory-utilization instead, which is why this could go to the
-      # wall here and could not before.
+      # That was Claude Code as a client, not the workloads this actually
+      # serves -- HA voice and the MCP agents send a few hundred tokens.
       #
-      # It is still a CEILING, not a dial. On the 32B, 40961 was tried and
-      # vLLM refused to start:
+      # KV cost here is 2 x 64 layers x 8 kv-heads x 128 head-dim x 2 B
+      # = 256 KiB per token, which is why the H100 held 211,552 tokens
+      # (51.6 GiB) after 18.0 GiB of weights at the default 0.9 utilisation.
+      #
+      # Raising this is not free -- see kvCacheSpaceGiB below, which has to
+      # move with it on the CPU backend, and the prefill cost in the plan doc.
+      #
+      # And 40960 is a CEILING, not a dial. 40961 was tried and vLLM refused
+      # to start:
       #
       #   User-specified max_model_len (40961) is greater than the derived
       #   max_model_len (max_position_embeddings=40960)
       #
-      # There is a VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 override and it is a trap:
-      # these models use RoPE, and positions beyond the trained maximum
-      # produce nan rather than an error. The way past a ceiling is rope
-      # scaling (YaRN), with its own KV cost -- not a +1.
+      # There is a VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 override, and it is a trap
+      # here: this model uses RoPE, and positions beyond the trained maximum
+      # produce nan rather than an error. The way past 40960 is rope scaling
+      # (YaRN), with its own KV cost, not a +1.
       #
       # If a client needs prompt + max_tokens to fit, the number that has to
-      # come down is the client's max_tokens. At 262144 that should stop
-      # being a conversation anyone has to have: the agentic client that
-      # forced 8192 -> 40960 needed ~40k.
-      maxLen: 262144
+      # come down is the client's max_tokens.
+      maxLen: 40960
 
       # Qwen3 is a hybrid reasoning model and its chat template turns
       # thinking ON unless told otherwise. For a voice assistant that is not
@@ -337,14 +310,14 @@ local:
         # decoding and never reaches the parser. Testing only the forced case
         # hides this completely; test tool_choice auto.
         #
-        # AND IT INVERTS WHEN THE MODEL CHANGES. For Qwen3-32B-AWQ the
-        # answer was hermes: that checkpoint's template emits
-        # <tool_call>{"name": ...}</tool_call>, JSON inside the tags, with no
-        # <function= anywhere. Qwen3.5 emits the nested XML form instead, and
-        # says so in its own system preamble:
+        # hermes, because THIS checkpoint's chat_template emits
+        # <tool_call>{"name": ..., "arguments": {...}}</tool_call> -- JSON
+        # inside the tags -- and contains no <function= or <parameter=, which
+        # is what qwen3_xml parses. Read out of the running pod rather than
+        # inferred from the model name. Measured 2026-11-05 on an H100.
         #
-        #   If you choose to call a function ONLY reply in the following
-        #   format with NO suffix:
+        # AND IT INVERTS WITH THE CHECKPOINT. Qwen3.5 tells the model to
+        # reply in the NESTED form instead, in its own system preamble:
         #
         #   <tool_call>
         #   <function=example_function_name>
@@ -354,39 +327,33 @@ local:
         #   </function>
         #   </tool_call>
         #
-        # which is what qwen3_xml parses and what hermes cannot. Carrying
-        # hermes across the model change would have reproduced the silent
-        # HTTP 200 exactly, in the opposite direction -- so the parser is not
-        # a per-family setting, it moves with the CHECKPOINT, in the same
-        # edit as model.name.
+        # which is qwen3_xml and which hermes cannot read. So this is not a
+        # per-family setting: it moves in the SAME EDIT as model.name, in
+        # whichever direction that edit goes. Both names are real in the
+        # pinned vLLM (vllm/tool_parsers/__init__.py at tag v0.27.1 -- the
+        # package moved out of vllm/entrypoints/openai/): hermes ->
+        # Hermes2ProToolParser, qwen3_xml -> Qwen3EngineToolParser.
         #
-        # Both names are real in the pinned vLLM (checked against
-        # vllm/tool_parsers/__init__.py at tag v0.27.1): hermes ->
-        # Hermes2ProToolParser, qwen3_xml -> Qwen3EngineToolParser. Read from
-        # Qwen3.5-35B-A3B-FP8's chat_template.jinja on 2026-11-05. Still
-        # UNPROVEN end to end on this checkpoint -- the H100 was already gone
-        # -- so the first GPU session must run the tool_choice auto test
-        # before anything is believed.
-        parser: qwen3_xml
+        # Checking costs nothing and needs no pod:
+        #   curl -s https://huggingface.co/<repo>/raw/main/chat_template.jinja \
+        #     | grep -c '<function='
+        # Non-zero means qwen3_xml; only <tool_call> with JSON means hermes.
+        parser: hermes
 
-    # GiB for the emptyDir the weights land in. NEWLY SET: it was absent, so
-    # the template's `| default 40` applied -- and 34.9 GiB of weights inside
-    # a 40Gi sizeLimit is 5 GiB of slack, with eviction mid-download as the
-    # failure mode and no other warning.
+    # GiB for the emptyDir the weights land in. Stated rather than left to
+    # the template's `| default 40`, which is what it was before and which
+    # hid the real trap: THERE ARE TWO INDEPENDENT 40Gi CEILINGS here. An
+    # emptyDir's usage also counts against the pod's ephemeral-storage, so
+    # resources.limits.ephemeral-storage below bounds the same bytes from a
+    # different direction, the smaller of the two is what actually binds, and
+    # overrunning EVICTS the pod mid-download with no other warning.
     #
-    # This is ONE OF TWO independent 40Gi ceilings, which is the trap. An
-    # emptyDir's usage also counts against the pod's ephemeral-storage limit,
-    # so resources.limits.ephemeral-storage below bounds exactly the same
-    # bytes from a different direction. Raising either alone leaves the other
-    # binding. They must move together; both are at 60/64 now.
-    #
-    # 60 rather than 40 also covers the next model up without a second edit:
-    # Qwen3-Next-80B-A3B's community AWQ build is 45.9 GiB.
-    #
-    # Headroom exists on the node -- config.yaml in the ansible repo gives
-    # the cloud node storage.size 150 (GB) -- so this is not taking from
-    # anything.
-    weightsVolumeGi: 60
+    # 40 is right for an 18.0 GiB model. Anything larger needs BOTH this and
+    # the ephemeral-storage limit raised together -- Qwen3.5-35B-A3B at FP8
+    # is 34.9 GiB, which would fit inside 40 with 5 GiB of slack and is
+    # exactly the size where this bites quietly. Node disk is not the
+    # constraint: the cloud node's storage.size is 150 (GB).
+    weightsVolumeGi: 40
 
     # GiB, and explicit. vLLM defaults this to 4 GiB when unset; on the
     # 7.98 GiB box this replaced, that default plus weights was the most
@@ -424,12 +391,9 @@ local:
     requests:
       cpu: "6"
       memory: 8Gi
-      # 40Gi, up from 24Gi. This is the number the SCHEDULER uses, so leaving
-      # it at 24 while the weights are 34.9 GiB tells the scheduler a lie
-      # about the node it is filling. On a single-tenant GPU node nothing
-      # else is competing for the disk, which is exactly why an understated
-      # request here is easy to leave in place and wrong anyway.
-      ephemeral-storage: 40Gi
+      # 24Gi, sized for an 18.0 GiB model. This is the number the SCHEDULER
+      # uses, so it has to move with the model too -- not just the limits.
+      ephemeral-storage: 24Gi
     limits:
       # No CPU limit on purpose: a cgroup quota throttles, and throttling a
       # token generator shows up directly as latency. The request is what
@@ -449,13 +413,11 @@ local:
       # both or the pod is OOMKilled the moment the cache fills -- which is a
       # failure at steady state under load, not at startup.
       memory: 16Gi
-      # 64Gi, up from 40Gi, and it has to move with vllm.weightsVolumeGi
-      # above -- see the note there. The emptyDir holding the weights counts
-      # against this limit too, so the smaller of the two is what actually
-      # binds, and exceeding it EVICTS the pod rather than returning an
-      # error. 64 against a 60Gi volume leaves room for logs and the HF
-      # download's temp files, which land in the same accounting.
-      ephemeral-storage: 64Gi
+      # 40Gi, and it moves with vllm.weightsVolumeGi above -- see the note
+      # there. The emptyDir holding the weights counts against this limit
+      # too, so the smaller of the two binds, and exceeding it EVICTS the pod
+      # rather than returning an error.
+      ephemeral-storage: 40Gi
 
   # Where this is allowed to run. Both halves are required and they do
   # different jobs: the toleration lets it onto the tainted cloud node, the

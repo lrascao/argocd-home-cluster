@@ -143,26 +143,21 @@ spec:
             - "8000"
             - --max-model-len
             - {{ .Values.vllm.model.maxLen | quote }}
-            {{- if .Values.vllm.gpu.enabled }}
-            # auto on the GPU, so the checkpoint's own quantization_config
-            # decides. Hardcoding bfloat16 here was correct while the only
-            # GPU model was AWQ -- int4 weights with bf16 activations -- and
-            # becomes a contradiction the moment the checkpoint is FP8, which
-            # wants fp8 weights with bf16 activations chosen by vLLM rather
-            # than overridden from outside.
+            # BF16 on both backends, stated rather than defaulted so a change
+            # of base image cannot quietly change the arithmetic. It is the
+            # CPU backend's native dtype on AVX-512 and what avx512_vnni
+            # accelerates, and it is also what the GPU session was measured
+            # with on 2026-11-05.
             #
-            # Stated as `auto` rather than omitted, which would have the same
-            # effect, to keep this file's habit of writing the load-bearing
-            # defaults down instead of inheriting them silently.
-            - --dtype
-            - auto
-            {{- else }}
-            # BF16 is the CPU backend's native dtype on AVX-512 and what
-            # avx512_vnni accelerates. Stated rather than defaulted so a
-            # change of base image cannot quietly change the arithmetic.
+            # NOT `auto`, which is what an FP8 checkpoint would want: for
+            # Qwen3-32B-AWQ, config.json says torch_dtype float16, so `auto`
+            # here resolves to fp16 and is a real change in the arithmetic
+            # rather than a no-op. If this chart ever serves an FP8 model,
+            # gate the flag on .Values.vllm.gpu.enabled and pass auto on the
+            # GPU branch only -- the comment above about AVX-512 is about the
+            # CPU path and does not travel.
             - --dtype
             - bfloat16
-            {{- end }}
             # On by default in the V1 engine, and stated anyway because this is
             # the single load-bearing latency setting on a CPU backend rather
             # than an optimisation. Prefill runs at ~148 tok/s here, so whether
@@ -286,11 +281,12 @@ spec:
           emptyDir:
             # Sized for the weights of the largest model this chart serves,
             # not the current one: the pod is evicted when it overruns, mid
-            # download, with no other warning. Qwen3.5-35B-A3B at FP8 is
-            # 34.9 GiB, so the old `default 40` left 5 GiB of slack --
-            # values.yaml now sets weightsVolumeGi explicitly, and the
-            # ephemeral-storage limit above bounds these same bytes a second
-            # time. Both have to move together.
+            # download, with no other warning. Qwen3-32B at 4-bit is 18.0 GiB.
+            # values.yaml now sets weightsVolumeGi explicitly rather than
+            # relying on the default below, because the ephemeral-storage
+            # limit above bounds these same bytes a second time -- both have
+            # to move together, and a 34.9 GiB model would fit the default
+            # with only 5 GiB of slack.
             sizeLimit: {{ .Values.vllm.weightsVolumeGi | default 40 }}Gi
         - name: dshm
           emptyDir:
