@@ -1,0 +1,20 @@
+# ClusterIP only: Catalyst's MCPServer sidecar runs in this cluster and dials
+# http://polymarket-mcp.polymarket-mcp.svc.cluster.local:8080/mcp. Only the
+# auth container's port is published; the MCP server itself listens on the
+# pod's loopback and nothing outside the pod can reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: polymarket-mcp
+  namespace: polymarket-mcp
+  labels:
+    app: polymarket-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: polymarket-mcp
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP

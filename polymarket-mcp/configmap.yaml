@@ -1,0 +1,44 @@
+# The bearer check in front of polymarket-mcp, which has no auth of its own.
+# The nginx image renders /etc/nginx/templates/*.template into conf.d at start,
+# substituting only environment variables that are actually set -- here just
+# ${MCP_BEARER_TOKEN}; nginx's own $variables pass through untouched.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polymarket-mcp-auth
+  namespace: polymarket-mcp
+data:
+  default.conf.template: |
+    server {
+        listen 8080;
+
+        location = /healthz {
+            access_log off;
+            return 200 "ok\n";
+        }
+
+        location / {
+            # A plain comparison, not a `map`: a map keyed on the full
+            # "Bearer <token>" string overflows map_hash_bucket_size.
+            if ($http_authorization != "Bearer ${MCP_BEARER_TOKEN}") {
+                return 401;
+            }
+
+            # Host stays nginx's default, $proxy_host (127.0.0.1:8000), and
+            # that is load-bearing: the MCP SDK builds this server with DNS
+            # rebinding protection on (allowed Host 127.0.0.1:* / localhost:*),
+            # and polymarket-mcp's --host does not turn it off. Forwarding the
+            # client's Host would get every call a 421.
+            proxy_pass http://127.0.0.1:8000;
+            # Same check for Origin, which the SDK only tests when present.
+            proxy_set_header Origin "";
+
+            # Streamable HTTP answers with SSE streams: no buffering, keep the
+            # upstream connection HTTP/1.1, and outlast long tool calls.
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 1h;
+        }
+    }

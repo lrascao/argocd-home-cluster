@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: whatsapp
+  namespace: whatsapp-mcp
+  labels:
+    app: whatsapp
+spec:
+  # One linked-device session, one process. Two pods on the same session make
+  # WhatsApp drop one of them and can corrupt the session store.
+  replicas: 1
+  # StatefulSets have no Recreate. With one replica, RollingUpdate already
+  # deletes the old pod and waits for it to be gone before creating the new
+  # one, so the session never has two owners. A NotReady node keeps the pod
+  # until it is force-deleted -- that is the same guarantee, not a bug.
+  serviceName: whatsapp
+  selector:
+    matchLabels:
+      app: whatsapp
+  # The default, spelled out: the volume holds the paired session, and
+  # deleting it means scanning the QR code again.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        app: whatsapp
+    spec:
+      # The app reads its config from APP_* / WHATSAPP_* env vars, and Service
+      # links inject <SERVICE>_PORT=tcp://... for every Service here. A Service
+      # named `app` would overwrite APP_PORT; switch them off instead of relying
+      # on names.
+      enableServiceLinks: false
+      containers:
+      - name: whatsapp
+        # go-whatsapp-web-multidevice (whatsmeow). Kept current rather than
+        # settled: WhatsApp changes its protocol under unofficial clients, and
+        # an old whatsmeow is what stops pairing. v9.8.0, 2026-10-30.
+        image: aldinokemal2104/go-whatsapp-web-multidevice:v9.8.0@sha256:caec634771e3a60b55f0651a70594593d63fb9ae751492260608b81ee4fd4abf
+        # The image's entrypoint starts as root only to chown the volumes,
+        # then drops to gowauser (20001:20000) with su-exec.
+        args:
+        - rest
+        env:
+        - name: APP_PORT
+          value: "3000"
+        # `me:<pw>,catalyst:<pw>` -- either one has full control of the
+        # account. Required: the server refuses to start on 0.0.0.0 without it.
+        - name: APP_BASIC_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-auth
+              key: APP_BASIC_AUTH
+        # The dashboard at / is fetched from github.com/aldinokemal/gowa-ui's
+        # latest release every 3h and runs in the browser that holds the `me`
+        # password. Pin it to gowa-ui v1.8.0; a newer release is refused, and
+        # the cached copy on the volume keeps being served. Bump together.
+        - name: APP_UI_ASSET_SHA256
+          value: 59e9fa617744b7745a4da6ea491ea1218135858e7a3236585e05e646b0db5d55
+        # Nothing granted to the agent reads media (download_media lives in
+        # whatsapp_message, which is not granted), and the default saves every
+        # photo and video from every chat and group onto the volume.
+        - name: WHATSAPP_AUTO_DOWNLOAD_MEDIA
+          value: "false"
+        - name: TZ
+          value: Europe/Lisbon
+        ports:
+        - name: http
+          containerPort: 3000
+        # /health is outside basic auth and only checks that the session store
+        # is open, so it is green before the QR code has been scanned.
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          failureThreshold: 4
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            # ffmpeg / libwebp run in-process on media sends
+            memory: 1Gi
+        volumeMounts:
+        - name: data
+          mountPath: /app/storages
+          subPath: storages
+        - name: data
+          mountPath: /app/statics
+          subPath: statics
+  # RWO on Longhorn: a real block device with ext4 under the SQLite files.
+  # Longhorn RWX would put an NFS share-manager in front, which is the
+  # arrangement SQLite corrupts under (see vaultwarden). Expandable in place.
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: longhorn
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 5Gi

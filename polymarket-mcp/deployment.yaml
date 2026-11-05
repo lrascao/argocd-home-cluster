@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polymarket-mcp
+  namespace: polymarket-mcp
+  labels:
+    app: polymarket-mcp
+spec:
+  # Stateless towards Polymarket, but not towards its clients: FastMCP keeps
+  # each streamable-HTTP session (mcp-session-id) in process memory, so a
+  # second replica behind the Service would answer half the calls with
+  # "unknown session".
+  replicas: 1
+  selector:
+    matchLabels:
+      app: polymarket-mcp
+  template:
+    metadata:
+      labels:
+        app: polymarket-mcp
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      # fzlzjerry/polymarket-mcp (PyPI mcp-polymarket): 14 read-only market
+      # data tools, no keys, no state. Installed by uvx at start, which needs
+      # PyPI reachable on every restart.
+      - name: mcp
+        image: ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
+        # The console script is `mcp-polymarket`, the same as the package --
+        # there is no `polymarket-mcp` command. --exclude-newer freezes the
+        # dependency resolution (mcp<2, httpx, pydantic and theirs), so a
+        # restart cannot pick up a release that came out after this was
+        # written. Move the date when bumping the version.
+        #
+        # Loopback only: the auth container is the one way in.
+        command:
+        - uvx
+        - --exclude-newer
+        - "2026-11-01T00:00:00Z"
+        - --from
+        - mcp-polymarket==0.1.0
+        - mcp-polymarket
+        - --http
+        - --host
+        - 127.0.0.1
+        - --port
+        - "8000"
+        env:
+        - name: UV_CACHE_DIR
+          value: /cache
+        - name: UV_PYTHON_DOWNLOADS
+          value: never
+        - name: HOME
+          value: /tmp
+        # Bound to loopback, so httpGet/tcpSocket probes (which dial the pod
+        # IP) cannot see it; ask from inside the container instead.
+        startupProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - import socket; socket.create_connection(("127.0.0.1", 8000), 2)
+          periodSeconds: 5
+          failureThreshold: 36
+        livenessProbe:
+          exec:
+            command:
+            - python3
+            - -c
+            - import socket; socket.create_connection(("127.0.0.1", 8000), 2)
+          periodSeconds: 30
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 20m
+            memory: 96Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: uv-cache
+          mountPath: /cache
+        - name: tmp
+          mountPath: /tmp
+      - name: auth
+        image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+        env:
+        - name: MCP_BEARER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: polymarket-mcp-token
+              key: MCP_BEARER_TOKEN
+        ports:
+        - name: http
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 64Mi
+        # Runs as the image's own user (101). It renders the template into
+        # /etc/nginx/conf.d at start, which is nginx:root 775 -- a pod-wide
+        # runAsUser would leave it unwritable.
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: auth-template
+          mountPath: /etc/nginx/templates
+          readOnly: true
+      volumes:
+      - name: uv-cache
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: auth-template
+        configMap:
+          name: polymarket-mcp-auth

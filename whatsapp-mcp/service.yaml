@@ -1,0 +1,24 @@
+# ClusterIP only, deliberately: no HTTPProxy and no NodePort. Catalyst's
+# MCPServer sidecar runs in this cluster (prj-14384718) and dials it as
+# http://whatsapp.whatsapp-mcp.svc.cluster.local:3000/mcp. The dashboard is
+# reached with `kubectl port-forward` -- see README.md.
+#
+# Basic auth is the only gate. Flannel does not enforce NetworkPolicy (and the
+# home-cluster AppProject blacklists the kind anyway), so every pod in the
+# cluster can open this port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: whatsapp
+  namespace: whatsapp-mcp
+  labels:
+    app: whatsapp
+spec:
+  type: ClusterIP
+  selector:
+    app: whatsapp
+  ports:
+  - name: http
+    port: 3000
+    targetPort: http
+    protocol: TCP
