@@ -167,6 +167,23 @@ data:
     RUNNING = {"running", "pending", "queued", "started", "in_progress"}
 
 
+    def final_answer(tid):
+        """The newest assistant message on the thread, which is the reply.
+
+        The agent composes its answer as the run's return text rather than as a
+        telegram_send_message call. It does that reliably once a teammate call
+        has happened, whatever the instructions say, because a tool result is
+        followed by a plain assistant turn. So the bridge reads the answer and
+        delivers it, the way whatsapp-bridge has always done -- delivery must
+        not depend on the model choosing to make a second tool call.
+        """
+        msgs = (agent_get(f"v1/threads/{tid}/messages") or {}).get("messages") or []
+        for msg in reversed(msgs):
+            if (msg.get("role") or "").lower() == "assistant":
+                return (msg.get("content") or "").strip()
+        return ""
+
+
     def settle_run(tid, deadline=120):
         """The run's own terminal state, which is NOT what the POST tells you.
 
@@ -269,7 +286,17 @@ data:
                     if outcome is not None and str(outcome).lower() != "completed":
                         log(f"run for {mid} ended {outcome!r} -- the agent did not answer")
                     else:
-                        log(f"run completed for {mid}")
+                        answer = final_answer(tid)
+                        if not answer:
+                            log(f"run completed for {mid} with no answer to deliver")
+                        else:
+                            # MARKER goes on here, not in the agent's prompt.
+                            # It is the loop defence, so it cannot depend on the
+                            # model remembering to type the right emoji.
+                            if not answer.startswith(MARKER):
+                                answer = f"{MARKER} {answer}"
+                            mcp.call("send_message", {"chat_id": CHAT, "message": answer})
+                            log(f"delivered answer for {mid} ({len(answer)} chars)")
                 except Exception as err:  # noqa: BLE001 - one bad run must not end the bridge
                     log(f"run failed for {mid}: {err}")
 
