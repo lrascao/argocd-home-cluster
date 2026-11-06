@@ -13,34 +13,166 @@ data:
     CERT="${CERT_DIR}/${CERT_NAME}/tls.crt"
     KEY="${CERT_DIR}/${CERT_NAME}/tls.key"
 
-    echo "watching ${CERT} for ${NAMESPACE}/${SECRET_NAME}"
+    # notAfter of the first certificate on stdin, as a sortable
+    # YYYYMMDDHHMMSS, or nothing at all when it cannot be established.
+    #
+    # The image has no openssl, and fetching one at start time is exactly the
+    # dependency the image pin exists to avoid, so the date is walked out of
+    # the DER with what busybox already has. The walk follows the fixed prefix
+    # of a TBSCertificate -- optional [0] version, serialNumber, signature,
+    # issuer -- to the validity SEQUENCE, whose second element is notAfter.
+    # Every step asserts the tag it expects and gives up rather than guess,
+    # because a date read out of the wrong field is worse than no date: the
+    # caller treats "no date" as "do not publish this".
+    cert_not_after() {
+      awk '/-----BEGIN CERTIFICATE-----/{f=1;next} /-----END CERTIFICATE-----/{exit} f' \
+        | base64 -d 2>/dev/null \
+        | od -An -tx1 -v \
+        | awk '
+          { gsub(/[ \t]/, ""); HEX = HEX $0 }
 
-    # Only used to decide whether to log; the apply runs every cycle regardless
-    # so that a secret deleted out from under us is put back without waiting
-    # for the certificate to change.
-    published=""
+          function byteat(p) { return substr(HEX, (p - 1) * 2 + 1, 2) }
+
+          function h2d(s,  i, v) {
+            v = 0
+            for (i = 1; i <= length(s); i++)
+              v = v * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+            return v
+          }
+
+          # Size of the tag-and-length header of the TLV at byte p.
+          function hdr(p,  l1) {
+            l1 = h2d(byteat(p + 1))
+            return l1 < 128 ? 2 : 2 + (l1 - 128)
+          }
+
+          # Size of the contents of the TLV at byte p.
+          function vlen(p,  l1, n, i, v) {
+            l1 = h2d(byteat(p + 1))
+            if (l1 < 128) return l1
+            n = l1 - 128
+            v = 0
+            for (i = 1; i <= n; i++) v = v * 256 + h2d(byteat(p + 1 + i))
+            return v
+          }
+
+          function skip(p) { return p + hdr(p) + vlen(p) }
+
+          # The digits of the Time at byte p. Only digits are decoded, so the
+          # trailing Z falls away on its own and both Time encodings come back
+          # as a plain run of digits.
+          function digits(p,  i, start, n, c, s) {
+            start = p + hdr(p)
+            n = vlen(p)
+            s = ""
+            for (i = 0; i < n; i++) {
+              c = index("3031323334353637383970", byteat(start + i))
+              if (c > 0 && c % 2 == 1) s = s substr("0123456789", (c + 1) / 2, 1)
+            }
+            return s
+          }
+
+          END {
+            p = 1
+            if (byteat(p) != "30") exit 1           # Certificate
+            p += hdr(p)
+            if (byteat(p) != "30") exit 1           # TBSCertificate
+            p += hdr(p)
+            if (byteat(p) == "a0") p = skip(p)      # version, absent in v1
+            if (byteat(p) != "02") exit 1           # serialNumber
+            p = skip(p)
+            if (byteat(p) != "30") exit 1           # signature
+            p = skip(p)
+            if (byteat(p) != "30") exit 1           # issuer
+            p = skip(p)
+            if (byteat(p) != "30") exit 1           # validity
+            p += hdr(p)
+            p = skip(p)                             # notBefore
+            tag = byteat(p)
+            d = digits(p)
+            # UTCTime is a two-digit year, and RFC 5280 reads 50 and over as
+            # the previous century. GeneralizedTime carries all four.
+            if (tag == "17" && length(d) >= 12)
+              printf "%s%s\n", (substr(d, 1, 2) + 0 >= 50 ? "19" : "20"), substr(d, 1, 12)
+            else if (tag == "18" && length(d) >= 14)
+              printf "%s\n", substr(d, 1, 14)
+            else
+              exit 1
+          }'
+    }
+
+    # Said once per change, so a steady state stays quiet and anything that
+    # moves is on the record.
+    last=""
+
+    say() {
+      if [ "$1" != "${last}" ]; then
+        echo "$1"
+        last="$1"
+      fi
+    }
+
+    publish() {
+      if kubectl create secret tls "${SECRET_NAME}" \
+           --cert="${CERT}" --key="${KEY}" \
+           --namespace "${NAMESPACE}" \
+           --dry-run=client -o yaml | kubectl apply -f - >/dev/null; then
+        say "published ${CERT_NAME} to ${NAMESPACE}/${SECRET_NAME}, $1"
+      else
+        echo "failed to publish ${NAMESPACE}/${SECRET_NAME}, retrying in ${PERIOD}s" >&2
+        last=""
+      fi
+    }
+
+    echo "watching ${CERT} for ${NAMESPACE}/${SECRET_NAME}"
 
     while true; do
       if [ -r "${CERT}" ] && [ -r "${KEY}" ]; then
-        current=$(cat "${CERT}" "${KEY}" | sha256sum | cut -d' ' -f1)
+        mine=$(cert_not_after < "${CERT}" || true)
 
-        if kubectl create secret tls "${SECRET_NAME}" \
-             --cert="${CERT}" --key="${KEY}" \
-             --namespace "${NAMESPACE}" \
-             --dry-run=client -o yaml | kubectl apply -f - >/dev/null; then
-          if [ "${current}" != "${published}" ]; then
-            echo "published ${CERT_NAME} to ${NAMESPACE}/${SECRET_NAME} (${current})"
-            published="${current}"
-          fi
+        if [ -z "${mine}" ]; then
+          say "cannot establish a notAfter for ${CERT}, leaving the secret alone"
+
+        elif [ "${mine}" -le "$(date -u +%Y%m%d%H%M%S)" ]; then
+          # An expired certificate is never worth publishing, whatever is in
+          # the secret, and on most nodes most of the time this is the branch
+          # that runs. The export is not the election holder's alone: every
+          # node that has ever held it keeps its last copy, and CoreDNS
+          # rewrites that copy from etcd whenever it restarts, so a node that
+          # lost the election sits on whatever was current when it last wrote.
+          # Publishing that unconditionally is what put an expired wildcard in
+          # front of every public name for a few seconds out of every minute
+          # -- four pods overwriting each other on a 60s cycle, two of them
+          # holding an August certificate that lapsed on 2026-11-02, which is
+          # how the image pulls from registry.88288338.xyz started failing.
+          say "${CERT} expired at ${mine}, leaving ${NAMESPACE}/${SECRET_NAME} alone"
+
         else
-          echo "failed to publish ${NAMESPACE}/${SECRET_NAME}, retrying in ${PERIOD}s" >&2
-          published=""
+          theirs=$(kubectl get secret "${SECRET_NAME}" --namespace "${NAMESPACE}" \
+                     -o jsonpath='{.data.tls\.crt}' 2>/dev/null \
+                   | base64 -d 2>/dev/null | cert_not_after || true)
+
+          if [ -z "${theirs}" ]; then
+            # Nothing published, or nothing readable published. Ours is the
+            # best available, and this is also what puts the secret back when
+            # it is deleted out from under us.
+            publish "it was missing"
+
+          elif [ "${mine}" -gt "${theirs}" ]; then
+            # Strictly newer only. Equal means another node published the same
+            # certificate, and re-applying it would just trade resourceVersions
+            # with that node forever and push a needless update to Contour on
+            # every cycle.
+            publish "it expires ${mine}, the published one ${theirs}"
+
+          else
+            say "holding at ${mine}, ${NAMESPACE}/${SECRET_NAME} expires ${theirs}"
+          fi
         fi
-      elif [ -n "${published}" ]; then
-        # The election moved away, so this node stopped being the one with a
-        # certificate. Whoever won it publishes from here on.
-        echo "${CERT} is gone, this node no longer holds the election"
-        published=""
+      else
+        # Every node that has held the election has an export, so this is a
+        # node that never has.
+        say "${CERT} is not readable, this node has nothing to publish"
       fi
 
       sleep "${PERIOD}"

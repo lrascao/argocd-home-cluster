@@ -13,8 +13,9 @@ spec:
         app: acme-cert-sync
     spec:
       serviceAccountName: acme-cert-sync
-      # Runs on every node because the election decides which one holds the
-      # certificate, and that can move at any time.
+      # Runs on every node because the election decides which one renews the
+      # certificate, and that can move at any time. Several nodes therefore
+      # hold an export; the entrypoint decides which one is worth publishing.
       tolerations:
       - key: node-role.kubernetes.io/control-plane
         operator: Exists

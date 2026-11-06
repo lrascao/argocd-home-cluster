@@ -2,9 +2,12 @@ local:
   namespace: acme
 
   sync:
-    # Directory the coredns acme plugin exports to, on the node itself. Only
-    # the instance that currently holds the election has anything in it, so
-    # every other pod in the daemonset idles.
+    # Directory the coredns acme plugin exports to, on the node itself. Not
+    # the election holder's alone, as this used to assume: every node that has
+    # ever held it keeps its last copy, and coredns rewrites that copy from
+    # etcd whenever it restarts, so several nodes hold several certificates of
+    # different ages at once. The publisher compares notAfter and only ever
+    # moves the secret forward -- see the entrypoint.
     hostPath: /etc/coredns/acme
     # Subdirectory holding the certificate to publish. The plugin writes one
     # per issued name, and "*" is sanitised to "wildcard_".
