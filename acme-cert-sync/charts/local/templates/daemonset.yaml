@@ -9,6 +9,14 @@ spec:
       app: acme-cert-sync
   template:
     metadata:
+      annotations:
+        # The entrypoint is mounted with subPath, and a subPath volume never
+        # sees a ConfigMap update -- a running pod keeps the script it started
+        # with for as long as it stays up, so editing the ConfigMap alone does
+        # nothing. These pods were 80 days old when the publishing logic
+        # changed under them. Rolling them on the script's checksum is what
+        # makes an edit to it actually reach the nodes.
+        checksum/entrypoint: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app: acme-cert-sync
     spec:
