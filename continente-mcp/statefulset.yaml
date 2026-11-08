@@ -21,6 +21,22 @@ spec:
         app: continente-mcp
     spec:
       enableServiceLinks: false
+      # The container `exec`s node, so node is PID 1 -- and Node never calls
+      # wait(). Every child supergateway orphans (a continente-mcp stdio
+      # process per session, and the Chromium tree behind it) is re-parented to
+      # PID 1 and stays there as a zombie: 1043 of them off a single parent
+      # after 3 days' uptime, ~320/day, with the cgroup at pids.max=max.
+      # Sharing the namespace makes the pod's pause container PID 1 instead,
+      # which exists to reap orphans. Cheaper than wrapping the command in an
+      # init: this image carries no tini, and root is read-only and non-root so
+      # one cannot be installed at start. Dropping the `exec` to leave bash as
+      # PID 1 was the other option and is worse -- bash would not forward
+      # SIGTERM to node, so every delete would wait out the grace period.
+      #
+      # Nothing bounded this but the node's threads-max, and nothing bounds the
+      # next workload either; the kubelet-side guard is podPidsLimit, in
+      # ansible-local-network's kube-kubelet-config.yaml.j2.
+      shareProcessNamespace: true
       securityContext:
         runAsNonRoot: true
         # pwuser, the Playwright image's own non-root user. fsGroup so the
