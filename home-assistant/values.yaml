@@ -259,3 +259,53 @@ home-assistant:
                 - daikin_altherma
               name: "Daikin Altherma"
               manufacturer: "Daikin"
+
+      # Moved here from a UI template helper, which is why there is a unique_id
+      # and why the entity registry already knows this name. The helper has to be
+      # deleted in Settings -> Devices & Services -> Helpers, or both definitions
+      # claim sensor.hrv_efficiency and this one lands as
+      # sensor.hrv_efficiency_2. History follows the entity_id rather than the
+      # unique_id, so deleting the helper and letting this take the name back
+      # keeps the existing graph continuous.
+      #
+      # The guard is the reason for the move. It used to be 1 C, which is far too
+      # loose: the figure is (supply - outdoor) / (extract - outdoor), so the
+      # denominator is the whole temperature difference there is to recover from.
+      # Over the week to 2026-11-09 its median was 2.5 C and 47% of samples read
+      # over 100%, every one of the worst sitting at exactly den = 1.0 and
+      # reporting 120%. At that scale the 0.2 C by which supply reads above
+      # extract -- well inside sensor tolerance -- is worth 20 points.
+      #
+      # 5 C is not a physical threshold, just the point where that 0.2 C costs 4
+      # points instead of 20. Expect `unavailable` through mild weather, most of
+      # November here included, and the Recovery efficiency graph on the HRV view
+      # to be empty until it turns cold. That is the honest output, not a
+      # regression.
+      #
+      # It will still read a little over 100% sometimes. Filtered to samples with
+      # a denominator of 5 C or more the median was 100% and the max 102%, which
+      # for a unit rated 90-95% points at the supply sensor sitting downstream of
+      # the supply fan, or carrying a small offset against the extract sensor.
+      # Deliberately not clamped: a min(100, ...) here would hide the only
+      # evidence of that bias.
+      #
+      # Only the last line needs the same `tpl` escaping as the value_templates
+      # above: Go's delimiters are a doubled brace pair, and it reads Jinja's
+      # {% %} statements as plain text. Note that comments go through tpl too --
+      # writing an empty doubled-brace pair in this very comment is what broke
+      # the first attempt at this block, with "missing value for command".
+      template:
+        - sensor:
+            - name: "HRV efficiency"
+              unique_id: hrv_efficiency
+              unit_of_measurement: "%"
+              state_class: measurement
+              state: |-
+                {% set oda = states('sensor.ducobox_d550_outdoor_temperature') | float(none) %}
+                {% set sup = states('sensor.ducobox_d550_supply_temperature') | float(none) %}
+                {% set eta = states('sensor.ducobox_d550_extract_temperature') | float(none) %}
+                {% if oda is none or sup is none or eta is none or (eta - oda) | abs < 5 %}
+                  unavailable
+                {% else %}
+                  {{ `{{ (((sup - oda) / (eta - oda)) * 100) | round(0) }}` }}
+                {% endif %}
