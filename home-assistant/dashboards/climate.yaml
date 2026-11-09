@@ -1,5 +1,6 @@
 # Climate -- shown in the sidebar at /dashboard-climate
-# Exported from lovelace.dashboard_climate in Home Assistant's .storage.
+# Source of truth, mounted at /config/dashboards and read in yaml mode.
+# Originally exported from lovelace.dashboard_climate; edit here, not in the UI.
 views:
   - title: Overview
     path: home
@@ -31,6 +32,53 @@ views:
               - sensor.daikin_altherma_desired_room_temperature
               - sensor.daikin_altherma_leaving_water_temperature
               - sensor.daikin_altherma_outdoor_temperature
+      # The five SNZB-02s, labelled by the area each one is assigned to in Home
+      # Assistant's area registry -- which is where the room really lives; the
+      # devices themselves are still named by IEEE address in both HA's device
+      # registry and z2m's devices.yaml.
+      #
+      # The labels are repeated here because a history-graph legend uses the
+      # entity's friendly name and has no notion of areas, so without them the
+      # key reads as five near-identical hex strings. The cost is that this list
+      # is a second copy of the area assignment: move a sensor to another room
+      # and both have to change. Naming the devices in the device registry would
+      # remove the duplication -- the friendly names would then carry the room
+      # everywhere -- and these `name:` lines would have to come out, since a
+      # card-level name wins over the entity's own.
+      - type: grid
+        cards:
+          - type: history-graph
+            title: Room temperatures (24h)
+            hours_to_show: 24
+            grid_options:
+              columns: full
+            entities:
+              - entity: sensor.0x70d07efffea417a6_temperature
+                name: Kitchen
+              - entity: sensor.0xf044d3fffeba852f_temperature
+                name: Living Room
+              - entity: sensor.0x70d07efffee93df0_temperature
+                name: Hall
+              - entity: sensor.0xb0e8e8fffe5f2250_temperature
+                name: Bathroom
+              - entity: sensor.0x18690afffe44e375_temperature
+                name: Suite Bathroom
+          - type: history-graph
+            title: Room humidity (24h)
+            hours_to_show: 24
+            grid_options:
+              columns: full
+            entities:
+              - entity: sensor.0x70d07efffea417a6_humidity
+                name: Kitchen
+              - entity: sensor.0xf044d3fffeba852f_humidity
+                name: Living Room
+              - entity: sensor.0x70d07efffee93df0_humidity
+                name: Hall
+              - entity: sensor.0xb0e8e8fffe5f2250_humidity
+                name: Bathroom
+              - entity: sensor.0x18690afffe44e375_humidity
+                name: Suite Bathroom
   - title: HRV
     path: hrv
     cards:

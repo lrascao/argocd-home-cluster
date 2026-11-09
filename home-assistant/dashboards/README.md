@@ -57,11 +57,15 @@ retype under Settings → Energy if the PVC is lost. Two things it records:
 
 ## Climate and Tablet overlap
 
-Every card in Tablet's first three views is identical to Climate's; they differ
-only in the first view's label (Climate calls it `Overview` at path `home`,
-Tablet calls it `Climate` at path `climate`) and in the `energy` view that only
-Tablet has. Nothing dedupes them — a change to one is not a change to the other,
-and now that both are in git that drift is at least visible in a diff.
+These two were card-for-card identical when they were exported, differing only
+in the first view's label (Climate calls it `Overview` at path `home`, Tablet
+calls it `Climate` at path `climate`) and in the `energy` view that only Tablet
+has. They have since diverged: Climate's Overview grew a third section with the
+Sonoff room graphs, and Tablet did not.
+
+That is the drift to expect — nothing dedupes them, so a change to one is never
+a change to the other. The difference is at least legible in a diff now that
+both are in git, which is more than storage mode offered.
 
 Tablet's `energy` view is built from core `energy-*` cards that read the
 preferences above. It holds no configuration of its own.
