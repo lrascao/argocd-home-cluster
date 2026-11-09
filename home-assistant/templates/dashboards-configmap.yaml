@@ -1,0 +1,40 @@
+# The Lovelace dashboards in ../dashboards, handed to Home Assistant as files on
+# disk so that git is their source of truth instead of the PVC's .storage.
+#
+# This sits in the umbrella chart's own templates/ rather than alongside the
+# HTTPProxy in charts/local/, and that is forced rather than chosen: .Files is
+# scoped to the chart whose template reads it, so a template under charts/local/
+# can only glob files under charts/local/. Keeping the dashboards at
+# home-assistant/dashboards/ -- beside the values.yaml that declares them --
+# means the template that reads them has to live at this level.
+#
+# Mounted at /config/dashboards by additionalMounts in ../values.yaml, with no
+# subPath. That is load-bearing: a subPath mount never receives ConfigMap
+# updates, which would quietly turn "push and it lands" into "push and restart
+# the pod". Mounted as a directory, kubelet swaps the ..data symlink to a freshly
+# written timestamped directory, the projected file's mtime moves, and
+# LovelaceYAML._load_config re-reads it on the next load because its cache is
+# older than the file. It then fires EVENT_LOVELACE_UPDATED, so a browser that
+# already has the dashboard open picks the change up as well.
+#
+# Two files in ../dashboards are deliberately not here:
+#
+#   * energy-preferences.yaml is the built-in Energy panel's sensor mapping, not
+#     a dashboard. Home Assistant has no YAML schema for energy sources at all,
+#     so mounting it could only mislead.
+#   * map.yaml cannot be a YAML dashboard. _validate_url_slug requires a
+#     url_path to contain a hyphen and exempts only "lovelace", and `map` has
+#     none -- declaring it fails config validation for the whole lovelace
+#     integration. It stays in .storage. See ../dashboards/README.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hass-dashboards
+  namespace: home-assistant
+data:
+{{- range $path, $_ := .Files.Glob "dashboards/*.yaml" }}
+{{- if not (has (base $path) (list "energy-preferences.yaml" "map.yaml")) }}
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+{{- end }}
+{{- end }}

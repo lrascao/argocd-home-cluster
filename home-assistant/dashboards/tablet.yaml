@@ -1,0 +1,75 @@
+# Tablet -- hidden from the sidebar, at /dashboard-tablet
+# Exported from lovelace.dashboard_tablet in Home Assistant's .storage.
+swipe_nav:
+  wrap: true
+  animate: swipe
+views:
+  - title: Climate
+    path: climate
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: gauge
+            entity: sensor.hrv_efficiency
+            name: Heat recovery
+            min: 0
+            max: 100
+            severity:
+              green: 75
+              yellow: 50
+              red: 0
+          - type: gauge
+            entity: sensor.daikin_altherma_tank_temperature
+            name: DHW tank
+            min: 20
+            max: 60
+            needle: true
+      - type: grid
+        cards:
+          - type: entities
+            title: Heat pump
+            entities:
+              - sensor.daikin_altherma_room_temperature
+              - sensor.daikin_altherma_desired_room_temperature
+              - sensor.daikin_altherma_leaving_water_temperature
+              - sensor.daikin_altherma_outdoor_temperature
+  - title: HRV
+    path: hrv
+    cards:
+      - type: history-graph
+        title: Air paths (24h)
+        hours_to_show: 24
+        entities:
+          - sensor.ducobox_d550_outdoor_temperature
+          - sensor.ducobox_d550_supply_temperature
+          - sensor.ducobox_d550_extract_temperature
+          - sensor.ducobox_d550_exhaust_temperature
+      - type: history-graph
+        title: Recovery efficiency
+        hours_to_show: 168
+        entities:
+          - sensor.hrv_efficiency
+  - title: Heat pump
+    path: heatpump
+    cards:
+      - type: history-graph
+        title: Temperatures (24h)
+        hours_to_show: 24
+        entities:
+          - sensor.daikin_altherma_leaving_water_temperature
+          - sensor.daikin_altherma_room_temperature
+          - sensor.daikin_altherma_outdoor_temperature
+      - type: history-graph
+        title: DHW tank vs setpoint (24h)
+        hours_to_show: 24
+        entities:
+          - sensor.daikin_altherma_tank_temperature
+          - sensor.daikin_altherma_desired_tank_temperature
+  - title: Energy
+    path: energy
+    cards:
+      - type: energy-date-selection
+      - type: energy-distribution
+      - type: energy-usage-graph
+      - type: energy-sources-table

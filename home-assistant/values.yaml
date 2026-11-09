@@ -33,6 +33,22 @@ home-assistant:
     - name: OPENAI_BASE_URL
       value: http://llm-gateway.voice.svc.cluster.local:8000/v1
 
+  # The dashboards ConfigMap rendered by templates/dashboards-configmap.yaml,
+  # mounted as a directory inside the PVC's /config. A ConfigMap volume is
+  # read-only, which is exactly right for YAML-mode dashboards: Home Assistant
+  # never writes them back.
+  #
+  # No subPath. See the comment in templates/dashboards-configmap.yaml for why
+  # that single word decides whether a push lands on its own or needs a restart.
+  additionalVolumes:
+    - name: dashboards
+      configMap:
+        name: hass-dashboards
+
+  additionalMounts:
+    - name: dashboards
+      mountPath: /config/dashboards
+
   persistence:
     enabled: true
     accessMode: ReadWriteOnce
@@ -131,6 +147,37 @@ home-assistant:
       automation: !include automations.yaml
       script: !include scripts.yaml
       scene: !include scenes.yaml
+
+      # Climate and Tablet are read from files in /config/dashboards; the
+      # registry entries in .storage/lovelace_dashboards for these two url_paths
+      # had to be deleted by hand first, because a url_path cannot be registered
+      # twice -- the loser is dropped with "Panel url path %s is not unique".
+      # Deleting a dashboard in that UI also deletes its .storage config, so the
+      # copies in dashboards/ are now the only ones that exist.
+      #
+      # `mode: storage` here is the DEFAULT for anything not listed below, and it
+      # is what keeps HACS in charge of frontend resources: resource_mode falls
+      # back to this value, and resources declared in YAML while it says storage
+      # are ignored with a warning. Home Assistant 2026.6 marks that fallback
+      # deprecated and removes it in 2026.8, so this will want an explicit
+      # `resource_mode: storage` before then.
+      #
+      # `map` is absent on purpose and cannot be added -- its url_path has no
+      # hyphen. Energy is a built-in panel and has no Lovelace config at all.
+      lovelace:
+        mode: storage
+        dashboards:
+          dashboard-climate:
+            mode: yaml
+            filename: dashboards/climate.yaml
+            title: Climate
+            show_in_sidebar: true
+          dashboard-tablet:
+            mode: yaml
+            filename: dashboards/tablet.yaml
+            title: Tablet
+            icon: mdi:tablet
+            show_in_sidebar: false
 
       mqtt:
         sensor:

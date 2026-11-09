@@ -1,0 +1,4 @@
+# Map -- hidden from the sidebar, at /map
+# Exported from lovelace.map in Home Assistant's .storage.
+strategy:
+  type: map

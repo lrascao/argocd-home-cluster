@@ -1,0 +1,19 @@
+# Energy -- the BUILT-IN panel at /energy, not a Lovelace dashboard.
+# Exported from .storage/energy. A record only: Home Assistant has no
+# YAML schema for energy sources, so this cannot be applied from a file.
+energy_sources:
+  - type: battery
+    stat_energy_from: sensor.venus_dc_battery_discharge_energy
+    stat_energy_to: sensor.venus_dc_battery_charge_energy
+  - type: grid
+    stat_energy_from: sensor.ac_in_grid_consumption_on_l1
+    stat_energy_to: sensor.ac_in_feed_in
+    stat_cost: null
+    stat_compensation: null
+    entity_energy_price: null
+    number_energy_price: null
+    entity_energy_price_export: null
+    number_energy_price_export: null
+    cost_adjustment_day: 0.0
+device_consumption: []
+device_consumption_water: []
