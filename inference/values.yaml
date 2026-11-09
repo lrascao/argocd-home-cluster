@@ -47,11 +47,13 @@ local:
     # sets the rate. So "choose by bytes" holds while the kernel can keep the
     # memory bus busy and stops holding when it cannot.
     #
-    # Practical consequence, and why the model below is FP8 rather than a
-    # 4-bit build: on this card a wider, natively-supported format can beat a
-    # narrower one that needs dequantising. Hopper has FP8 tensor cores; it
-    # has no int4 path. Do not assume the 4-bit column wins here the way it
-    # won on the L40S -- measure both, cheaply, before committing a session.
+    # Practical consequence, and it only applies on the H100: there, a wider,
+    # natively-supported format can beat a narrower one that needs
+    # dequantising, because Hopper has FP8 tensor cores and no int4 path. The
+    # model below stays 4-bit AWQ, which is the measured right answer on the
+    # L40S (86% of the card's ceiling) and is what this is pointed at again.
+    # If the H100 fallback is ever taken, do not assume the 4-bit column
+    # wins there the way it won here -- measure both, cheaply, first.
     #
     # Read the 14B column before choosing a model. Generation on this card is
     # memory-bandwidth-bound exactly as it is on the CPU node: the L40S moves
@@ -72,7 +74,16 @@ local:
       # l40s, but "NVIDIA H100 80GB HBM3" gives h100-80gb-hbm3, and a bare
       # h100 here matches nothing: the pod sits Pending on a healthy node
       # billed by the GPU-hour. Read the label off the node, do not guess it.
-      model: h100-80gb-hbm3
+      #
+      # THIS MOVES WITH ansible-local-network's config.yaml, which declares
+      # the plan and therefore the card. Those two now offer both -- a spot
+      # L40S live and an H100 commented underneath, because UpCloud's
+      # capacity decides which one can be bought on the day -- and switching
+      # there without switching here is the silent half of the pair: the
+      # session boots, the node reads Ready, and this pod waits for a label
+      # nothing has. l40s for GPU-SPOT-8xCPU-64GB-1xL40S,
+      # h100-80gb-hbm3 for GPU-SPOT-12xCPU-240GB-1xH100.
+      model: l40s
       count: 1
 
     # Qwen3-1.7B, stepped back DOWN from the 4B, and the reason is latency
