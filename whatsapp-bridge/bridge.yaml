@@ -52,7 +52,7 @@ spec:
         fsGroup: 65532
       containers:
       - name: bridge
-        image: registry.88288338.xyz/whatsapp-bridge:0.1.0
+        image: registry.88288338.xyz/whatsapp-bridge:0.2.0
         env:
         - name: WHATSAPP_URL
           value: http://whatsapp:3000
@@ -82,11 +82,30 @@ spec:
         - name: AGENT_APP_ID
           value: whatsapp-agent
         # Kept in the secret rather than here, so the numbers stay out of git.
+        # This one is who may talk to the agent one to one, and stays Luis.
         - name: ALLOWED_SENDERS
           valueFrom:
             secretKeyRef:
               name: whatsapp-bridge
               key: ALLOWED_SENDERS
+        # Which groups it answers in, and any further number a mention of it
+        # may use. In the secret for the same reason -- a group id names the
+        # family's group -- and optional there, so the pod still starts
+        # against a secret sealed before these keys existed. Without
+        # ALLOWED_GROUPS it answers in no group, which is how it behaved
+        # before it could answer in one at all.
+        - name: ALLOWED_GROUPS
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: ALLOWED_GROUPS
+              optional: true
+        - name: AGENT_MENTION
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: AGENT_MENTION
+              optional: true
         ports:
         - name: http
           containerPort: 8080
