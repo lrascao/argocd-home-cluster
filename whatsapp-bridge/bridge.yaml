@@ -52,7 +52,7 @@ spec:
         fsGroup: 65532
       containers:
       - name: bridge
-        image: registry.88288338.xyz/whatsapp-bridge:0.2.0
+        image: registry.88288338.xyz/whatsapp-bridge:0.3.0
         env:
         - name: WHATSAPP_URL
           value: http://whatsapp:3000
@@ -106,6 +106,22 @@ spec:
               name: whatsapp-bridge
               key: AGENT_MENTION
               optional: true
+        # Whose group description the bridge will read, on top of the group
+        # having its info locked to admins. Empty -- the key does not exist
+        # today -- means any admin of an allowed group may set the tag that
+        # picks the profile. Narrow it by sealing PROFILE_AUTHORS with the
+        # numbers that may, which is the same form as ALLOWED_SENDERS.
+        - name: PROFILE_AUTHORS
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-bridge
+              key: PROFILE_AUTHORS
+              optional: true
+        # How long a group's description is kept before it is read again. It
+        # bounds how soon an edit to profiles.yaml or to a description takes
+        # effect, and how often the bridge asks go-whatsapp for group info.
+        - name: PROFILE_TTL
+          value: 5m
         ports:
         - name: http
           containerPort: 8080
@@ -131,6 +147,17 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /data
+        # The group profiles, one file per key of whatsapp-bridge-profiles.
+        # Not a subPath mount: those never see a ConfigMap change, and the
+        # point of keeping the profiles here is editing them without a
+        # rebuild.
+        - name: profiles
+          mountPath: /profiles
+          readOnly: true
+      volumes:
+      - name: profiles
+        configMap:
+          name: whatsapp-bridge-profiles
   volumeClaimTemplates:
   - metadata:
       name: data

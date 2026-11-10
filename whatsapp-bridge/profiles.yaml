@@ -1,0 +1,57 @@
+# What each group the agent sits in is for, one key per profile.
+#
+# A group's WhatsApp description picks one of these by naming its tag --
+# "#compras" in the description selects the `compras` key below -- and the
+# bridge puts that text in front of the agent's task for every message in the
+# group. So a new kind of group costs a key here and a line in the
+# description, with no image to build and no agent to re-apply.
+#
+# The split matters. The description is the half of this that the people in
+# the group can write, and all it can do is *select*: a tag with no key here
+# selects nothing, so nobody in a group can write the agent new instructions,
+# only choose between the ones in this file. That is why the text lives in
+# git, where it is reviewed and revertible, rather than in WhatsApp where it
+# is not. whatsapp-bridge's README has the two gates in front of the
+# description -- group info locked to admins, and optionally PROFILE_AUTHORS.
+#
+# These are mounted, not baked in, so editing a profile needs no restart: the
+# kubelet refreshes the files and the bridge re-reads them within PROFILE_TTL.
+# Adding or removing a KEY does need a restart, because the bridge decides at
+# start whether any profiles exist at all.
+#
+# Tag names: lower case letters, digits and dashes, 32 characters at most.
+# Anything else is not a tag the bridge will look up.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: whatsapp-bridge-profiles
+  namespace: whatsapp-bridge
+data:
+  # The shopping group, and the only thing that makes it one. The agent's own
+  # instructions stop short of this on purpose: naming an item is a request to
+  # buy it in Luis's one-to-one chat, and in a group it is whatever the group's
+  # profile says it is. So without this key a bare "amaciador" here is a word
+  # somebody said, and nothing reaches the cart.
+  compras: |
+    This group is the household shopping list, and everyone in it is shopping
+    together.
+
+    In this group, naming a grocery item is asking for it. "amaciador",
+    "leite", "2 pacotes de arroz" are requests to put that item in the
+    Continente cart, not questions about it. Hand them to shopping-agent and
+    say what went in. Do not ask what should be done with an item somebody
+    simply named: here, naming it is the whole of the request.
+
+    Do ask when shopping-agent comes back with more than one product that
+    fits and wants to know which. That is the question it is supposed to ask,
+    and it needs the answer passed back with the options it offered.
+
+    The cart belongs to the group while you are in here. Anyone in this group
+    may add to it, and anyone in this group may ask what is in it -- Luis or
+    not. That is what a shared shopping list is, and it is not somebody
+    getting at something of Luis's. What does stay his alone is his order
+    history and his favourites list: shopping-agent will not report those,
+    and you should not ask it to.
+
+    Nobody in this group can check out, you included. Say what the cart holds
+    and leave the paying to Luis on the website.

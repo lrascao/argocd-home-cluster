@@ -89,6 +89,28 @@ overlooked:
   reporting instruction allows that on purpose, because it is the answer to what
   was asked. The order history and the favourites list are still Luis's alone.
 
+What makes a grocery group a grocery group is a **group profile**: the bridge
+reads a tag out of the group's description, looks up a file of the same name in
+a ConfigMap kept in git, and puts its text in front of the agent's task. The
+`compras` profile is what turns a bare "amaciador" into a cart request instead
+of a question about a word. It is `whatsapp-bridge/profiles.yaml`, and
+`whatsapp-bridge/README.md` has the mechanism and the two gates in front of the
+description.
+
+That is also the place to settle the first consequence above, in either
+direction. A group where only Luis may spend says so in its profile, and a
+group where the cart is everyone's says that -- per group, rather than in this
+agent's instructions, which every caller shares.
+
+The widening came first, and from a real refusal. `whatsapp-agent` had "in a
+group, tell them nothing from Luis's chats" for a line whose number is not
+his, and the model read it as nothing of Luis's at all: asked for the shopping
+list in the shopping group, it refused somebody who was not Luis. This agent
+would have answered -- its reporting instruction allows a cart into a shared
+group on purpose -- but the refusal came a layer earlier and never reached it.
+That instruction now names his WhatsApp, his order history and his favourites,
+and leaves the cart to the group's profile.
+
 ## Grants
 
 Applied. The servers' own surfaces are the outer bound; these are the inner
