@@ -10,15 +10,30 @@ views:
     sections:
       - type: grid
         cards:
-          - type: gauge
-            entity: sensor.hrv_efficiency
-            name: Heat recovery
-            min: 0
-            max: 100
-            severity:
-              green: 75
-              yellow: 50
-              red: 0
+          # A gauge cannot render a non-numeric state: it replaces itself with
+          # "Entity is non-numeric". Now that the efficiency sensor is
+          # deliberately unavailable whenever indoors and outdoors are within
+          # 5 C -- most of a mild month -- that error box would be its normal
+          # appearance. Conditional drops the card instead, and the Recovery
+          # efficiency graph on the HRV view still shows the gaps.
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: sensor.hrv_efficiency
+                state_not: unavailable
+              - condition: state
+                entity: sensor.hrv_efficiency
+                state_not: unknown
+            card:
+              type: gauge
+              entity: sensor.hrv_efficiency
+              name: Heat recovery
+              min: 0
+              max: 100
+              severity:
+                green: 75
+                yellow: 50
+                red: 0
           - type: gauge
             entity: sensor.daikin_altherma_tank_temperature
             name: DHW tank

@@ -261,12 +261,9 @@ home-assistant:
               manufacturer: "Daikin"
 
       # Moved here from a UI template helper, which is why there is a unique_id
-      # and why the entity registry already knows this name. The helper has to be
-      # deleted in Settings -> Devices & Services -> Helpers, or both definitions
-      # claim sensor.hrv_efficiency and this one lands as
-      # sensor.hrv_efficiency_2. History follows the entity_id rather than the
-      # unique_id, so deleting the helper and letting this take the name back
-      # keeps the existing graph continuous.
+      # and why the entity registry already knows this name. History follows the
+      # entity_id rather than the unique_id, so deleting that helper and letting
+      # this take the name back kept the existing graph continuous.
       #
       # The guard is the reason for the move. It used to be 1 C, which is far too
       # loose: the figure is (supply - outdoor) / (extract - outdoor), so the
@@ -277,35 +274,56 @@ home-assistant:
       # extract -- well inside sensor tolerance -- is worth 20 points.
       #
       # 5 C is not a physical threshold, just the point where that 0.2 C costs 4
-      # points instead of 20. Expect `unavailable` through mild weather, most of
-      # November here included, and the Recovery efficiency graph on the HRV view
-      # to be empty until it turns cold. That is the honest output, not a
-      # regression.
+      # points instead of 20. Expect this unavailable through mild weather, most
+      # of November here included, and the Recovery efficiency graph on the HRV
+      # view to be empty until it turns cold. That is the honest output.
       #
-      # It will still read a little over 100% sometimes. Filtered to samples with
-      # a denominator of 5 C or more the median was 100% and the max 102%, which
-      # for a unit rated 90-95% points at the supply sensor sitting downstream of
-      # the supply fan, or carrying a small offset against the extract sensor.
-      # Deliberately not clamped: a min(100, ...) here would hide the only
-      # evidence of that bias.
+      # The guard lives in `availability`, NOT in the state template, and that
+      # distinction is load-bearing. The original helper returned the literal
+      # string "unavailable" from `state`, which looks like it works and does
+      # not: template/validators.py treats only a real None as "no value", so
+      # for a sensor carrying a state_class the string is simply an invalid
+      # number. It logs "Received invalid sensor state: unavailable ...,
+      # expected a number" and leaves the entity `unknown`, which then renders
+      # on a gauge card as "Entity is non-numeric". The old 1 C guard fired so
+      # rarely that nobody saw it. `availability` returning false is what
+      # actually marks the entity unavailable.
       #
-      # Only the last line needs the same `tpl` escaping as the value_templates
-      # above: Go's delimiters are a doubled brace pair, and it reads Jinja's
-      # {% %} statements as plain text. Note that comments go through tpl too --
-      # writing an empty doubled-brace pair in this very comment is what broke
-      # the first attempt at this block, with "missing value for command".
+      # The state template keeps its own copy of the guard because availability
+      # does not short-circuit it -- every template on the entity is rendered
+      # together -- and without it an eta == oda reading would divide by zero.
+      # It returns the literal None, which the validator does accept, so the
+      # unavailable path logs nothing.
+      #
+      # It will still read a little over 100% when it is cold. Filtered to
+      # samples with a denominator of 5 C or more the median was 100% and the
+      # max 102%, which for a unit rated 90-95% points at the supply sensor
+      # sitting downstream of the supply fan, or carrying a small offset against
+      # the extract sensor. Deliberately not clamped: a min(100, ...) here would
+      # hide the only evidence of that bias.
+      #
+      # Only the two rendered expressions need the same `tpl` escaping as the
+      # value_templates above: Go's delimiters are a doubled brace pair, and it
+      # reads Jinja's {% %} statements as plain text. Comments go through tpl
+      # too -- writing an empty doubled-brace pair in a comment here is what
+      # broke the first attempt at this block, with "missing value for command".
       template:
         - sensor:
             - name: "HRV efficiency"
               unique_id: hrv_efficiency
               unit_of_measurement: "%"
               state_class: measurement
+              availability: |-
+                {% set oda = states('sensor.ducobox_d550_outdoor_temperature') | float(none) %}
+                {% set sup = states('sensor.ducobox_d550_supply_temperature') | float(none) %}
+                {% set eta = states('sensor.ducobox_d550_extract_temperature') | float(none) %}
+                {{ `{{ oda is not none and sup is not none and eta is not none and (eta - oda) | abs >= 5 }}` }}
               state: |-
                 {% set oda = states('sensor.ducobox_d550_outdoor_temperature') | float(none) %}
                 {% set sup = states('sensor.ducobox_d550_supply_temperature') | float(none) %}
                 {% set eta = states('sensor.ducobox_d550_extract_temperature') | float(none) %}
                 {% if oda is none or sup is none or eta is none or (eta - oda) | abs < 5 %}
-                  unavailable
+                  None
                 {% else %}
                   {{ `{{ (((sup - oda) / (eta - oda)) * 100) | round(0) }}` }}
                 {% endif %}
