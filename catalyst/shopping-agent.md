@@ -32,6 +32,11 @@ diagrid apply --project test -f catalyst/shopping-agent.yaml
 diagrid export --durableagent shopping-agent --project test
 ```
 
+**At most 20 instructions.** `diagrid apply` refuses the 21st with
+`instructions must contain at most 20 entries`, and both agents now sit exactly
+on that line. A new rule has to be folded into an existing one -- which is why
+the `get_most_bought` entry carries three facts rather than one.
+
 `diagrid apply` accepts `DurableAgent` even though the CLI has no subcommand
 for it and `diagrid agent` manages something else entirely (an `Agent` is a
 name and an endpoint, with no instructions, model or tools). Two things the
@@ -87,7 +92,11 @@ overlooked:
   Luis's number trigger a cart write -- not here.
 - **The cart's contents and total are relayed into the group.** This agent's
   reporting instruction allows that on purpose, because it is the answer to what
-  was asked. The order history and the favourites list are still Luis's alone.
+  was asked. The favourites list is still Luis's alone.
+- **Past orders are relayed into the group too**, since 2026-11-10. Luis asked
+  for it knowing what it means: anyone in a group whose profile opens past
+  orders can see what he has bought, with dates and totals. The favourites list
+  is the one thing left that no caller may report.
 
 What makes a grocery group a grocery group is a **group profile**: the bridge
 reads a tag out of the group's description, looks up a file of the same name in
@@ -117,7 +126,7 @@ Applied. The servers' own surfaces are the outer bound; these are the inner
 one.
 
 ```bash
-diagrid mcpserver access grant continente --project test --caller shopping-agent --allow-tools search_products,get_favorites,get_most_bought,get_cart,add_to_cart,update_cart_item,close_session
+diagrid mcpserver access grant continente --project test --caller shopping-agent --allow-tools search_products,get_favorites,get_most_bought,get_cart,add_to_cart,update_cart_item,close_session,get_order_history
 ```
 
 ```bash
@@ -131,12 +140,18 @@ that same agent is what makes anything it reads into something it could be
 talked into sending or buying. A separate caller keeps this to one chat and
 one cart.
 
+`get_order_history` was deliberately left out until 2026-11-10, on the grounds
+that `get_most_bought` distils it. It does not: `get_most_bought` is a tally
+with no dates and no order boundaries, so "what was in the last order" is not a
+question it can express, however it is asked. That is what made the tool look
+missing rather than ungranted. It is granted now, and both agents are told that
+past orders may be reported and that the favourites list may not.
+
 Deliberately left out:
 
 | Not granted | Why |
 | --- | --- |
 | `refresh_favorites` | re-scrapes the favourites page; run by hand when the list changes, not on every trip |
-| `get_order_history` | `get_most_bought` distils it; the raw history is every item ever bought |
 | telegram `list_chats`, `get_history`, `search_global`, `list_contacts`, `search_contacts` | reach every chat and other people's details; this agent needs the one chat it is answering in |
 | telegram `wait_for_*`, `get_messages_after` | the bridge polls, not the agent -- see below |
 
