@@ -100,14 +100,17 @@ spec:
     his accounts to anyone but Luis in that chat.
   - If a tool call fails or returns nothing, say what failed. Never invent a
     message, a product, a price or a confirmation.
-  llmConfig:
-    endpoint: http://vllm.inference.svc.cluster.local:8000/v1
-    # The deployment's own --served-model-name, which is what the endpoint
-    # answers to -- the same one shopping-agent uses. Not whatsapp-agent's
-    # `qwen3-32b-awq`, which is stale.
-    model: qwen3-5-35b-a3b-fp8
-    provider: openai
-    # Catalyst requires this field whenever llmConfig is set. It is not a
-    # secret and is not in vaultwarden: vllm is started with no --api-key, so
-    # it authenticates nothing and ignores whatever is sent.
-    apiKey: unused-vllm-has-no-auth
+  # The shared OpenAI component, which is what all four agents actually run on.
+  # This file said vllm until 2026-11-10 and the live agent had already been
+  # moved off it, so applying this file would have broken a working agent: the
+  # vllm Deployment has been Pending for over a day and nothing answers at that
+  # endpoint. That is not hypothetical -- it happened to shopping-agent.
+  llmComponentName: llm-openai
+  # To go back to the local model once the GPU node is up, swap the line above
+  # for this block. The Deployment serves `qwen3-32b-awq`; the
+  # `qwen3-5-35b-a3b-fp8` this used to ask for was a name nothing answered to.
+  # llmConfig:
+  #   endpoint: http://vllm.inference.svc.cluster.local:8000/v1
+  #   model: qwen3-32b-awq
+  #   provider: openai
+  #   apiKey: unused-vllm-has-no-auth

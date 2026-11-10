@@ -1,8 +1,13 @@
 # shopping-agent
 
-The Telegram → Continente shopping flow: ask for "milk" in a Telegram chat,
-get asked back which of the milks you actually buy, answer, and it lands in
-the cart.
+The Continente shopping flow: ask for "milk" in a chat, get asked back which
+of the milks you actually buy, answer, and it lands in the cart.
+
+It is live over **WhatsApp**, not Telegram. `whatsapp-agent` calls this agent
+as a teammate and `whatsapp-bridge` carries the chat, so the Telegram bridge
+below is still the missing half of the Telegram path only. Either front door
+may call this agent, which is why its instructions say "your caller" and name
+neither.
 
 Three parts, two of them built:
 
@@ -56,9 +61,33 @@ Two more sharp edges they work around:
 
 - `get_most_bought` returns **names with no `product_id`**. The id has to come
   from a follow-up `search_products` on the full name.
+- The favourites the ranking uses are a **cached snapshot**, not the live page:
+  `handle_search` reads them through `getPreferences()` from the file that
+  `refresh_favorites` writes (`src/index.js`). Since `refresh_favorites` is not
+  granted, starring something in the account changes nothing here until someone
+  runs it by hand.
+- `rankByPreference` adds **+50 for every favourite whose name substring-matches
+  in either direction**, and they stack, so a short generic favourite name can
+  lift products that have nothing to do with it above a +100 exact favourite.
 - Only **one order** is visible on this account today, so "usually" means that
   order plus the 54 favourites, tallied by quantity within it rather than
   frequency across orders. It improves as orders accrue.
+
+## In a WhatsApp group
+
+`whatsapp-agent` answers in the groups on `ALLOWED_GROUPS`, so whoever is in
+that group can put things in Luis's cart by naming them. That is the point of a
+shopping group, and the cart is not a payment -- this agent cannot check out
+and is told to say so. Two consequences were accepted deliberately rather than
+overlooked:
+
+- **Anyone in the group may add to the cart.** The bridge checks the group, not
+  the sender, and `whatsapp-agent` hands any grocery line to this agent. If that
+  is wrong, the narrowing belongs in `whatsapp-agent`'s instructions -- let only
+  Luis's number trigger a cart write -- not here.
+- **The cart's contents and total are relayed into the group.** This agent's
+  reporting instruction allows that on purpose, because it is the answer to what
+  was asked. The order history and the favourites list are still Luis's alone.
 
 ## Grants
 
