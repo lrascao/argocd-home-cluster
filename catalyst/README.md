@@ -90,85 +90,149 @@ is an anchor change like any other.
 
 ### Changing the trust anchors
 
-Any change to `dapr-trust-anchors.pem`, including the first switch to this
-PKI and a new root, goes in this order. The agent reads the anchors only at
-boot, and on boot installs them into Sentry *before* it joins, so the control
-plane has to know them first.
+Any change to `dapr-trust-anchors.pem`, whether a new root or dropping an
+old one, needs a rejoin first. The agent reads the anchors only at boot,
+installs them into Sentry, and then presents them when it joins, so the
+control plane has to know them before the agent restarts.
 
-1. **Mint and seal the root** (only for a new root). Outside the repo:
+A new root also goes in two phases: first every pod learns to trust it, then
+Sentry starts issuing under it. They cannot happen together. On boot the
+agent hands Sentry its issuer and anchors in a single Helm upgrade, before
+the new bundle has reached any other pod, and the gateway and management
+load it only when they are restarted. A certificate issued under the new
+root in that window is refused by every pod still on the old bundle. In
+phase 1 the issuer stays under a root everyone already trusts, so nothing
+can be refused.
+
+Not within a few minutes of 10:00 UTC, when the `jwt-key-rotation` CronJob
+rewrites Sentry's Secret.
+
+1. **Mint the new root.** Outside the repo. Give it a name of its own, so
+   that no two roots in the bundle share a subject:
 
    ```bash
    P=~/catalyst-dapr-pki; mkdir -m 700 -p $P
    printf '[req]\ndistinguished_name = dn\n[dn]\n[root]\nbasicConstraints = critical, CA:TRUE\nkeyUsage = critical, digitalSignature, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n' > $P/ext.cnf
    openssl ecparam -name prime256v1 -genkey -noout -out $P/root.key
-   openssl req -x509 -new -key $P/root.key -sha256 -days 3650 -subj "/O=homelab/CN=homelab-catalyst-dapr-root" -config $P/ext.cnf -extensions root -out $P/root.crt
+   openssl req -x509 -new -key $P/root.key -sha256 -days 3650 -subj "/O=homelab/CN=homelab-catalyst-dapr-root-$(date +%Y)" -config $P/ext.cnf -extensions root -out $P/root.crt
    ```
 
-   From the repo root, seal it and add it to the anchors after the roots
-   already there:
+   Seal it, but keep the result in `$P` until phase 2. The sealed root is
+   what cert-manager signs Sentry's issuer with, so it must not reach the
+   cluster before every pod trusts it. From the repo root, add the
+   certificate to the anchors, after the roots already there:
 
    ```bash
-   kubectl create secret tls catalyst-dapr-root-ca --namespace diagrid --dry-run=client -o yaml --cert ~/catalyst-dapr-pki/root.crt --key ~/catalyst-dapr-pki/root.key | kubeseal --controller-namespace kube-system --controller-name sealed-secrets-controller --format yaml > catalyst/charts/local/templates/sealed-secret-dapr-root-ca.yaml
+   kubectl create secret tls catalyst-dapr-root-ca --namespace diagrid --dry-run=client -o yaml --cert ~/catalyst-dapr-pki/root.crt --key ~/catalyst-dapr-pki/root.key | kubeseal --controller-namespace kube-system --controller-name sealed-secrets-controller --format yaml > ~/catalyst-dapr-pki/sealed-secret-dapr-root-ca.yaml
    cat ~/catalyst-dapr-pki/root.crt >> catalyst/charts/local/files/dapr-trust-anchors.pem
    ```
 
-   Store `root.key` away from this machine, then `rm -P ~/catalyst-dapr-pki/root.key`.
+   Store `root.key` away from this machine (Vaultwarden), then
+   `rm -P ~/catalyst-dapr-pki/root.key`.
 
-2. **Push the PKI objects alone**, without touching `values.yaml`. The agent
-   does not read them yet. Once ArgoCD has synced, the issuer must chain to the
-   anchors:
-
-   ```bash
-   kubectl -n diagrid get certificate catalyst-dapr-issuer
-   kubectl -n diagrid get secret catalyst-dapr-issuer -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl verify -CAfile catalyst/charts/local/files/dapr-trust-anchors.pem
-   ```
-
-   `READY True`, then `stdin: OK`.
-
-3. **Rejoin**, which replaces the pinned anchors with the file's. It is
+2. **Phase 1, the anchors: rejoin, push the anchors file alone, restart the
+   agent.** The rejoin replaces the pinned anchors with the file's. It is
    Diagrid's admin API (`diagrid-adm`, built from cloudgrid's `tools/admin`),
-   and takes the token the host joined with -- the one already sealed in
-   `catalyst-join-token`, read straight from the cluster below -- which it
-   accepts expired:
+   and it takes the token the host joined with, the one sealed in
+   `catalyst-join-token`, which it accepts expired:
 
    ```bash
    export DIAGRID_ADMIN_ENABLE_WRITE_ACCESS=true
-   diagrid-adm --env production-r1 orgs rejoin-region 7a9817cc-30bf-4bc5-89b3-99687a01d85c --region homelab --join-token "$(kubectl -n cra-agent get secret catalyst-join-token -o jsonpath='{.data.join_token}' | base64 -d)" --ca-bundle catalyst/charts/local/files/dapr-trust-anchors.pem --reason "homelab: root Sentry onto own PKI"
+   diagrid-adm --env production-r1 orgs rejoin-region 7a9817cc-30bf-4bc5-89b3-99687a01d85c --region homelab --join-token "$(kubectl -n cra-agent get secret catalyst-join-token -o jsonpath='{.data.join_token}' | base64 -d)" --ca-bundle catalyst/charts/local/files/dapr-trust-anchors.pem --reason "homelab: Dapr trust anchors change"
    ```
 
-   `Private region CA rotation accepted.` The running agent is unaffected,
-   but from here until step 4 lands an agent restart fails with the 409, so do
-   step 4 straight away.
-
-4. **Push the change that makes the agent read them**: the first time, the
-   `internal_dapr.pki` block in `values.yaml`; after that, the anchors file
-   itself. The agent restarts, installs the new issuer and anchors into Sentry
-   and joins. Not within a few minutes of 10:00 UTC, when the
-   `jwt-key-rotation` CronJob rewrites Sentry's Secret.
+   It answers `Private region CA rotation accepted.` The running agent is not
+   affected, but from here on an agent restart that presents the old anchors
+   fails with the 409. So push the anchors file straight away. Once ArgoCD
+   has synced it, restart the agent by hand: the ConfigMap lives in
+   `diagrid`, and only a change to `agent-config` restarts the agent on its
+   own.
 
    ```bash
+   kubectl -n cra-agent rollout restart deploy/agent
    kubectl -n cra-agent rollout status deploy/agent --timeout=10m
    kubectl -n cra-agent logs deploy/agent | grep -E 'loaded dapr trust anchors|error joining region'
    ```
 
-   The agent copies the anchors into every `prj-*` namespace and restarts
-   their sidecars, but not the Dapr control plane or its own siblings:
+   The Helm upgrade rolls the Dapr control plane, three replicas at a time.
+   The agent copies the bundle into every `prj-*` namespace and into
+   `cra-agent/ca-certificates-bundle`, then rolls every sidecar whose copy
+   changed. While a sidecar rolls, its old and new pods hold Postgres
+   connections at the same time, which is what `max_connections` in
+   `postgresql/values.yaml` is sized for. The agent does not restart its own
+   siblings, so restart those so they load the new bundle:
 
    ```bash
-   kubectl -n root-dapr-system rollout restart deploy/dapr-operator sts/dapr-placement-server sts/dapr-scheduler-server
-   kubectl -n cra-agent rollout restart deploy -l app.kubernetes.io/instance=catalyst
-   kubectl get pods -A | awk '$1 ~ /^prj-/ && $4 ~ /CrashLoop|Init:/'
+   kubectl -n cra-agent rollout restart deploy/catalyst-gateway deploy/catalyst-gateway-controlplane deploy/management
    ```
 
-   If the agent exits on the 409 instead, the pinned set is not the file's:
-   compare the `provided sha256` in that error with the rejoin, and rejoin
-   again with the file. Fix forward rather than reverting `values.yaml`:
-   Sentry already holds the new CA by then, and how an agent without the
-   `pki` block treats that state is untested.
+   Before phase 2, Sentry must still be on the old issuer, and every copy of
+   the bundle must be current:
+
+   ```bash
+   kubectl -n root-dapr-system get secret dapr-trust-bundle -o jsonpath='{.data.issuer\.crt}' | base64 -d | openssl x509 -noout -issuer
+   want=$(kubectl -n root-dapr-system get configmap dapr-trust-bundle -o jsonpath='{.data.ca\.crt}' | shasum)
+   for ns in $(kubectl get configmap -A --field-selector metadata.name=dapr-trust-bundle -o jsonpath='{.items[*].metadata.namespace}'); do [ "$(kubectl -n $ns get configmap dapr-trust-bundle -o jsonpath='{.data.ca\.crt}' | shasum)" = "$want" ] && echo "$ns current" || echo "$ns STALE"; done
+   [ "$(kubectl -n cra-agent get configmap ca-certificates-bundle -o jsonpath='{.data.ca\.crt}' | shasum)" = "$want" ] && echo "ca-certificates-bundle current" || echo "ca-certificates-bundle STALE"
+   kubectl get pods -A | awk '$1 ~ /^prj-/ && $4 ~ /CrashLoop|Error|Init:/'
+   ```
+
+   Dropping an old root is phase 1 alone: Sentry's issuer is already under a
+   root that stays. History signed under the dropped root no longer verifies,
+   and workflows that replay it are tombstoned, which is why the
+   Sentry-generated root is still in the bundle.
+
+3. **Phase 2, the issuer: push the sealed root, then renew Sentry's issuer
+   under it.** The anchors do not change, so there is no rejoin and no agent
+   restart.
+
+   ```bash
+   cp ~/catalyst-dapr-pki/sealed-secret-dapr-root-ca.yaml catalyst/charts/local/templates/sealed-secret-dapr-root-ca.yaml
+   ```
+
+   cert-manager does not reissue a Certificate when its Issuer's CA changes,
+   so once ArgoCD has synced the new root, renew the issuer by hand:
+
+   ```bash
+   cmctl renew -n diagrid catalyst-dapr-issuer
+   kubectl -n diagrid get secret catalyst-dapr-issuer -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl verify -CAfile catalyst/charts/local/files/dapr-trust-anchors.pem
+   ```
+
+   Within a minute the agent logs `root Dapr issuer changed, redeploying root
+   Dapr`. Each Sentry pod then logs `Issuer credentials changed; reloading`
+   and carries on without a restart. The issuer check from phase 1 now names
+   the new root. Certificates issued under the old root stay valid and move
+   over as they renew, within a day.
+
+If the agent exits on the 409 at any point, the control plane is pinned to a
+different set of certificates than the file holds. Compare the `provided
+sha256` in that error with the rejoin, and rejoin again with the file. Fix
+forward rather than reverting: Sentry already holds the new bundle by then.
+
+#### How the first switch went
+
+The region moved onto this PKI on 2026-11-11, in the same two phases, from a
+Sentry with no PKI configured. The difference was phase 1's issuer: there was
+no issuer under a shared root yet, so `internal_dapr.pki.issuer.secret`
+pointed at the one Sentry had generated, read back from its own Secret:
+`root-dapr-system/dapr-trust-bundle`, with `cert: issuer.crt` and
+`key: issuer.key`. Sentry got the two-root bundle and kept its Ed25519
+issuer. Phase 2 pointed the issuer at `diagrid/catalyst-dapr-issuer`.
+
+- `5d01d721` put the PKI objects into `diagrid` without the agent reading
+  them.
+- `32747d88` was phase 1, after the rejoin. Every sidecar rolled. The new
+  sidecar pods crash-looped for about three minutes, refused by Postgres
+  with SQLSTATE 53300 because it was out of connections, until the old pods
+  let go. No app ID was ever without a Ready pod.
+- `dd4dcbc9` was phase 2. Only the agent restarted, and Sentry reloaded the
+  issuer in place.
+- `a9d66e3e` raised Postgres's `max_connections` for the next rollout.
 
 cloudgrid has the reasoning behind each step:
 `docs/content/runbooks/catalyst-shared-pki-root.md` and
-`catalyst-region-sentry-ca-rotation.md`.
+`catalyst-region-sentry-ca-rotation.md`. The second describes the same two
+phases for regions without `internal_dapr.pki`.
 
 ## Which release to install next
 
