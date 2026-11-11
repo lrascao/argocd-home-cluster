@@ -1,0 +1,48 @@
+kafka:
+  image:
+    # Bitnami moved its free images out of `bitnami/`; the default repository
+    # no longer resolves. Pinned to the legacy mirror that the live release
+    # already runs.
+    repository: bitnamilegacy/kafka
+
+  # Same reasoning as postgresql/values.yaml: the chart generates SASL
+  # passwords with `randAlphaNum` when none are supplied, and its `lookup` of
+  # the live secret is inert under `helm template`. Under ArgoCD that would
+  # mean new passwords on every sync -- which would break both inter-broker
+  # auth and the agent, whose own copy is sealed into `catalyst-kafka` in
+  # `cra-agent`. The keys below must carry the values the live cluster is
+  # already using, not new ones.
+  sasl:
+    existingSecret: kafka-credentials
+
+  kraft:
+    # Not a credential -- the cluster's identity, and it must be pinned. The
+    # chart generates it the same way it generates passwords, so under ArgoCD
+    # every sync would propose a new one, while this value stays written in
+    # `meta.properties` inside the broker's volume. The broker would then
+    # refuse to start with InconsistentClusterIdException. Read back with:
+    #   kubectl exec -n kafka kafka-controller-0 -- \
+    #     grep cluster.id /bitnami/kafka/data/meta.properties
+    clusterId: ioZmozuQEv0TeHcwyUWYeh
+
+  controller:
+    replicaCount: 1
+    heapOpts: -Xmx384m -Xms384m
+    persistence:
+      # Immutable volumeClaimTemplate -- see postgresql/values.yaml.
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 768Mi
+
+  # Single broker, so nothing can be replicated more than once. message.max.bytes
+  # is raised because the agent passes whole shopping payloads through pub/sub.
+  extraConfig: |-
+    offsets.topic.replication.factor=1
+    transaction.state.log.replication.factor=1
+    transaction.state.log.min.isr=1
+    default.replication.factor=1
+    message.max.bytes=4000000

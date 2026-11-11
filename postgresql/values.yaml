@@ -1,0 +1,24 @@
+postgresql:
+  auth:
+    database: catalyst
+    # The password is NOT set here on purpose. Left unset, the chart falls
+    # back to `randAlphaNum 24` in its secrets.yaml, and the `lookup` that
+    # would otherwise reuse the live secret returns nothing under `helm
+    # template` -- which is how ArgoCD renders. The result would be a new
+    # random password written on every sync, against a database that was
+    # initialised with the old one.
+    existingSecret: postgresql-credentials
+    secretKeys:
+      adminPasswordKey: postgres-password
+
+  global:
+    defaultStorageClass: longhorn
+
+  primary:
+    # Catalyst's Dapr state store needs logical replication.
+    extendedConfiguration: wal_level = logical
+    persistence:
+      # Matches the live volumeClaimTemplate. volumeClaimTemplates are
+      # immutable, so changing this means recreating the StatefulSet by hand.
+      size: 1Gi
+    resourcesPreset: small

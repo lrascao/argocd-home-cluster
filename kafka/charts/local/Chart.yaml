@@ -1,0 +1,4 @@
+apiVersion: v1
+description: Sealed SASL credentials for the Kafka that backs Catalyst pub/sub
+name: local
+version: 0.0.1
