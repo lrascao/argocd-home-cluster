@@ -203,22 +203,44 @@ ansible-local-network, under `playbooks/kubernetes/cluster/argocd/`:
 
 What it renders, in order: `nextVersion`, when `state` is `current`, the
 version is non-empty, `expiresAt` has not passed, and helm resolves the tag to
-the published `nextChartDigest`; otherwise `currentVersion`, so a stale or
-missing answer holds the region where it is rather than dragging it back to
-whatever git pins; otherwise the version in `Chart.yaml`, which is what
-bootstraps a region that has published nothing. Whether the version carries an
-`-rc.` picks `candidate/` or the GA path, so a promotion to GA moves the
-repository as well as the version.
+the published `nextChartDigest`; otherwise `currentVersion`, so a stale
+answer, a missing one, or a version the registry will not serve holds the
+region where it is rather than dragging it back to whatever git pins;
+otherwise the version in `Chart.yaml`, which is what bootstraps a region that
+has published nothing. Whether the version carries an `-rc.` picks
+`candidate/` or the GA path, so a promotion to GA moves the repository as well
+as the version.
 
 At the channel head there is nothing to install, and the answer says so by
 leaving `nextVersion` empty with `reason: ALREADY_AT_DESTINATION` -- which the
 plugin treats as "hold what is running", the same as a stale answer. This
-region is on `channel: candidate`, `mode: follow`. The one branch that has
-never run on real values is the digest check: `nextChartDigest` is empty until
-there is a hop to make, and it is read as the chart's OCI manifest digest,
-which is what helm prints and is NOT `nextReleaseDigest` (a different digest,
-over Diagrid's release catalog). If that reading is wrong the first hop holds
-`currentVersion` and logs `digest mismatch`, so it fails safe and says so.
+region is on `channel: candidate`, `mode: follow`.
+
+The first real hop, rc.23 to rc.24 on 2026-11-11, settled two readings that
+until then were guesses. The digest check holds: `nextChartDigest` was
+`sha256:9f8e2470` and helm printed the same digest, so it is the chart's OCI
+manifest digest and NOT `nextReleaseDigest` (a different digest, over
+Diagrid's release catalog). Had that reading been wrong the hop would have
+held `currentVersion` and logged `digest mismatch`, which is the safe
+direction to be wrong in.
+
+`nextChartRepository` was the other reading, and it was wrong. It is the OCI
+repository with the chart name on the end, `.../diagrid/candidate/catalyst`,
+which is what `helm pull` and `helm upgrade --install` take. A helm
+dependency's `repository` is the parent of that, because helm appends `name`
+itself, so the published value handed through whole asked the registry for
+`candidate/catalyst/catalyst` and got a 404. The plugin strips the chart name
+and accepts either form. Diagrid is consistent about it -- the
+`nextChartReference` published beside it is that same repository with
+`@digest` appended, which is how OCI composes a reference -- so the conversion
+is ours to do, as the umbrella chart is the only thing here that consumes it
+as a dependency.
+
+Worth knowing how that failed, because the Application did not say: it showed
+`error sending tgz file to cmp-server: error sending stream: EOF`, which is
+the repo-server hanging up after the sidecar had already failed, and the
+`context canceled` entries after it are retries racing that cancellation. The
+cause was in the sidecar's log alone.
 
 Every decision is a line in the sidecar's log:
 
