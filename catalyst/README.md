@@ -53,28 +53,72 @@ path -- see `mailserver/README.md`.
 
 ## Which release to install next
 
-`catalyst.agent.config.release_availability.enabled` is on, so the agent
-publishes the release Diagrid says this region should install next into
-ConfigMap `catalyst-release-availability` in `cra-agent`:
+`catalyst.agent.config.release_availability` is on, so the agent asks Diagrid's
+resolver every five minutes and publishes the answer into ConfigMap
+`catalyst-release-availability` in `cra-agent`:
 
 ```bash
 kubectl -n cra-agent get cm catalyst-release-availability -o yaml
 ```
 
-It is a fact, not an action. Nothing upgrades the region off it -- the bump is
-still the `Chart.yaml` commit below -- and it is what saves reading the ECR tag
-list by hand to notice a new candidate.
+Read `state` first (`current`, `expired` or `unavailable`). `nextVersion` is the
+release to install now, `currentVersion` is what the region is observed
+running, and `expiresAt` is about fifteen minutes out: a decision is a fact
+with a shelf life, not a standing instruction. `enabled` alone publishes
+nothing -- the resolver `endpoint` is required, and without it the agent only
+logs a warning.
 
-`release_availability.readers` names `argocd-repo-server`, and the chart turns
-that into a Role and RoleBinding (`catalyst-agent-sa-release-availability-reader`)
-for `get` on that one ConfigMap, nothing wider. It is the only ArgoCD component
-that needs the grant: `argocd-application-controller` and `argocd-server`
-already read ConfigMaps cluster-wide. The key is dropped before the agent's
-config is written, since the agent has no such setting.
+**The version in `Chart.yaml` is no longer the one deployed.** ArgoCD renders
+this chart through a config management plugin, `catalyst-release-v1.0`, which
+rewrites that dependency version before templating. It lives in
+ansible-local-network, under `playbooks/kubernetes/cluster/argocd/`:
 
-Nothing reads it yet. Wiring it to ArgoCD -- whatever ends up substituting the
-version while this chart is rendered -- is still to do, and `argocd-repo-server`
-is the reader on the assumption that it runs there.
+- `manifests/catalyst-release-cmp.yaml` -- the plugin and the script that does
+  the work
+- `templates/values/argocd.yaml.j2` -- the `catalyst-release` sidecar on
+  argocd-repo-server, which is why this chart grants `argocd-repo-server` `get`
+  on that one ConfigMap
+- `manifests/catalyst-app.yaml` -- the Application, which now names the plugin
+  where it used to carry `helm.releaseName`. The release name moved into the
+  script and is still load-bearing there
+
+What it renders, in order: `nextVersion`, when `state` is `current`, the
+version is non-empty, `expiresAt` has not passed, and helm resolves the tag to
+the published `nextChartDigest`; otherwise `currentVersion`, so a stale or
+missing answer holds the region where it is rather than dragging it back to
+whatever git pins; otherwise the version in `Chart.yaml`, which is what
+bootstraps a region that has published nothing. Whether the version carries an
+`-rc.` picks `candidate/` or the GA path, so a promotion to GA moves the
+repository as well as the version.
+
+At the channel head there is nothing to install, and the answer says so by
+leaving `nextVersion` empty with `reason: ALREADY_AT_DESTINATION` -- which the
+plugin treats as "hold what is running", the same as a stale answer. This
+region is on `channel: candidate`, `mode: follow`. The one branch that has
+never run on real values is the digest check: `nextChartDigest` is empty until
+there is a hop to make, and it is read as the chart's OCI manifest digest,
+which is what helm prints and is NOT `nextReleaseDigest` (a different digest,
+over Diagrid's release catalog). If that reading is wrong the first hop holds
+`currentVersion` and logs `digest mismatch`, so it fails safe and says so.
+
+Every decision is a line in the sidecar's log:
+
+```bash
+kubectl -n argocd logs deploy/argocd-repo-server -c catalyst-release | grep catalyst-release:
+```
+
+### When it takes effect
+
+Not the moment Diagrid publishes. ArgoCD caches generated manifests per git
+revision for `--repo-cache-expiration`, 24h by default and not overridden here,
+so a new release lands within a day -- or at once on any commit to this repo, a
+repo-server restart, or a Hard Refresh in the UI. Lowering it is one line in
+the argo-cd values (`configs.params."reposerver.repo.cache.expiration"`) and it
+applies to every app in this repo, not just this one.
+
+To stop the region moving at all, hold the channel at Diagrid's end
+(`diagrid region release hold --reason ... --review-at ...`). The resolver then
+offers no `nextVersion` and the plugin holds `currentVersion`.
 
 ## Bumping the chart
 
@@ -82,3 +126,8 @@ Change the `catalyst` version in `Chart.yaml` and run `helm dependency update`
 in this directory so `Chart.lock` follows. Release candidates come from
 `oci://public.ecr.aws/diagrid/candidate`, GA versions from
 `oci://public.ecr.aws/diagrid`.
+
+Since the plugin above, this sets the fallback rather than the deployed
+version: the region follows the channel, and a bump here only shows up on a
+region that has published no answer yet. To move the region deliberately, move
+it at Diagrid's end -- the channel, or a hold.
