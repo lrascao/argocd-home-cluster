@@ -78,6 +78,30 @@ catalyst:
           existing_secret_namespace: cra-agent
 
       internal_dapr:
+        # Root Sentry issues from our PKI (charts/local/templates/dapr-pki.yaml)
+        # rather than the CA it generated at install. Both halves are required
+        # together. The issuer Secret is re-read every minute, so cert-manager's
+        # renewals land on their own; the anchors are read only at boot, and a
+        # change to them needs an admin rejoin first. README.md, "Dapr PKI".
+        pki:
+          issuer:
+            # Phase 1 of the switch: the issuer Sentry generated at install,
+            # read from the Secret it already runs on, so only the trust
+            # anchors change and nothing is issued under the new root before
+            # every pod trusts it. Phase 2 swaps this for
+            #   name: catalyst-dapr-issuer
+            #   namespace: diagrid
+            # (no cert/key: tls.crt and tls.key are the defaults). README.md,
+            # "Dapr PKI".
+            secret:
+              name: dapr-trust-bundle
+              namespace: root-dapr-system
+              cert: issuer.crt
+              key: issuer.key
+          trust:
+            config_map:
+              name: catalyst-dapr-trust-anchors
+              namespace: diagrid
         sentry:
           jwt:
             enabled: true
