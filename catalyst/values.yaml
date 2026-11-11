@@ -89,6 +89,46 @@ catalyst:
             mtls:
               enabled: true
 
+      # The agent publishes the release Diagrid says this region should install
+      # next into ConfigMap catalyst-release-availability in cra-agent. It is a
+      # fact, not an action: nothing upgrades the region off it, the bump stays
+      # a commit to Chart.yaml, and the ConfigMap is what tells us a new
+      # candidate is out without watching the ECR tag list by hand. README.md
+      # has the reader side.
+      release_availability:
+        enabled: true
+        # The chart turns each reader into a Role and RoleBinding for `get` on
+        # that one ConfigMap, and drops the key before writing the agent config
+        # (the agent has no such setting). argocd-repo-server is the only ArgoCD
+        # component that cannot already read ConfigMaps in cra-agent -- the
+        # application controller and argocd-server both can, cluster-wide -- so
+        # it is the one that needs naming for whatever reads the answer while
+        # rendering this chart.
+        readers:
+        - name: argocd-repo-server
+          namespace: argocd
+
+      sidecar:
+        # 1.138.0-rc.23 raised the chart's sidecar requests to 50m/96Mi; these
+        # are the 10m/25Mi every sidecar in this region had been scheduled with
+        # up to then, pinned here so a chart bump no longer moves them. Ten
+        # sidecars in prj-14384718 means the chart's figures would have added
+        # about 400m CPU and 710Mi of requests on four nodes already at 30-63%
+        # CPU and 30-42% memory requests.
+        #
+        # Requests only decide scheduling; limits are untouched (helm merges
+        # maps key by key, so the chart's 300m/256Mi stay), and a sidecar still
+        # bursts up to them. Measured 2026-11-11, the cra container runs 5-7m
+        # CPU and 42-65Mi: the CPU request covers that, the memory one asks for
+        # well under half of it, which is what the chart's 96Mi was correcting.
+        # The scheduler therefore packs a node tighter than reality, and under
+        # memory pressure the kubelet evicts whatever is furthest over its
+        # request -- these pods -- first.
+        resources:
+          requests:
+            cpu: 10m
+            memory: 25Mi
+
   management:
     config:
       tunnel:

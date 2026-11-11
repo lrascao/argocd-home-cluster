@@ -51,6 +51,31 @@ re-sealed without touching the database credentials:
 Run them from the repo root. If `KUBECONFIG` is set it must be an absolute
 path -- see `mailserver/README.md`.
 
+## Which release to install next
+
+`catalyst.agent.config.release_availability.enabled` is on, so the agent
+publishes the release Diagrid says this region should install next into
+ConfigMap `catalyst-release-availability` in `cra-agent`:
+
+```bash
+kubectl -n cra-agent get cm catalyst-release-availability -o yaml
+```
+
+It is a fact, not an action. Nothing upgrades the region off it -- the bump is
+still the `Chart.yaml` commit below -- and it is what saves reading the ECR tag
+list by hand to notice a new candidate.
+
+`release_availability.readers` names `argocd-repo-server`, and the chart turns
+that into a Role and RoleBinding (`catalyst-agent-sa-release-availability-reader`)
+for `get` on that one ConfigMap, nothing wider. It is the only ArgoCD component
+that needs the grant: `argocd-application-controller` and `argocd-server`
+already read ConfigMaps cluster-wide. The key is dropped before the agent's
+config is written, since the agent has no such setting.
+
+Nothing reads it yet. Wiring it to ArgoCD -- whatever ends up substituting the
+version while this chart is rendered -- is still to do, and `argocd-repo-server`
+is the reader on the assumption that it runs there.
+
 ## Bumping the chart
 
 Change the `catalyst` version in `Chart.yaml` and run `helm dependency update`

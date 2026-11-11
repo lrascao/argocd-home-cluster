@@ -8,7 +8,7 @@ dependencies:
 # repository oci://public.ecr.aws/diagrid instead, so moving off an rc changes
 # the repository as well as the version.
 - name: catalyst
-  version: 1.138.0-rc.7
+  version: 1.138.0-rc.23
   repository: oci://public.ecr.aws/diagrid/candidate
 - name: local
   version: 0.0.1
