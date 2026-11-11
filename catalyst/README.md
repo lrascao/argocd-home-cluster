@@ -109,12 +109,21 @@ kubectl -n argocd logs deploy/argocd-repo-server -c catalyst-release | grep cata
 
 ### When it takes effect
 
-Not the moment Diagrid publishes. ArgoCD caches generated manifests per git
-revision for `--repo-cache-expiration`, 24h by default and not overridden here,
-so a new release lands within a day -- or at once on any commit to this repo, a
-repo-server restart, or a Hard Refresh in the UI. Lowering it is one line in
-the argo-cd values (`configs.params."reposerver.repo.cache.expiration"`) and it
-applies to every app in this repo, not just this one.
+Not the moment Diagrid publishes. The Application reconciles every 120s, but
+each reconcile is served from ArgoCD's manifest cache, keyed by git revision
+and kept for `--repo-cache-expiration` -- 24h by default and not overridden
+here. So a release Diagrid publishes lands within a day, or at once on either
+of the two things that miss that cache: a commit to this repo, which is a new
+revision and so a new key, or a hard refresh:
+
+```bash
+kubectl -n argocd annotate app catalyst argocd.argoproj.io/refresh=hard --overwrite
+```
+
+Restarting repo-server does **not** shorten it -- the cache lives in Redis,
+not in the pod. Lowering the TTL is one line in the argo-cd values
+(`configs.params."reposerver.repo.cache.expiration"`) and it applies to every
+app in this repo, not just this one.
 
 To stop the region moving at all, hold the channel at Diagrid's end
 (`diagrid region release hold --reason ... --review-at ...`). The resolver then
