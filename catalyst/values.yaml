@@ -64,7 +64,7 @@ catalyst:
           enabled: true
           disable_tls: true
           auth_type: connectionString
-          namespace: postgres
+          namespace: postgresql
           # host, port, username and password come from this secret (sealed in
           # charts/local/templates/) rather than the connection_string_* keys,
           # which would put the password in the agent-config and
