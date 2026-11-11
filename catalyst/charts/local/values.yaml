@@ -1,0 +1,9 @@
+# Where the Dapr PKI's root, cert-manager Issuer, Sentry's issuer and trust
+# anchors live (templates/dapr-pki.yaml); the chart creates it. Must equal
+# both namespaces under catalyst.agent.config.internal_dapr.pki in
+# ../../values.yaml.
+#
+# Defaulted here rather than set under local: in ../../values.yaml so the PKI
+# objects can be pushed and checked before the values.yaml change that makes
+# the agent read them (README.md, "Changing the trust anchors").
+pkiNamespace: diagrid

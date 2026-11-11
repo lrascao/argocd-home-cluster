@@ -1,0 +1,76 @@
+# The region's root Dapr Sentry issues from this PKI instead of a CA it
+# generates itself; the agent reads it through internal_dapr.pki in
+# ../../../values.yaml. README.md, "Dapr PKI", has why it is shaped this way
+# and what may and may not change.
+#
+# The root's certificate and key come from sealed-secret-dapr-root-ca.yaml.
+# The root was minted offline and sealed, rather than made by cert-manager, so
+# that nothing in the cluster can replace it: the control plane pins the
+# trust anchors at join, and a root that is not among them breaks the region.
+#
+# The whole PKI -- the root, the cert-manager Issuer, Sentry's issuer and the
+# trust anchors -- lives in its own namespace, apart from cra-agent, so the two
+# private keys are not readable by whatever can read the agent's namespace. The
+# agent reads the issuer Secret and the anchors there with its cluster-wide
+# read on Secrets and ConfigMaps.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.pkiNamespace }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: catalyst-dapr-root-ca
+  namespace: {{ .Values.pkiNamespace }}
+spec:
+  ca:
+    secretName: catalyst-dapr-root-ca
+---
+# Sentry's issuer. cert-manager renews it under the same root 30 days before it
+# expires, and the agent, which re-reads this Secret every minute, redeploys
+# root Dapr with it. A renewal changes no trust anchor, so it needs no rejoin.
+#
+# Shaped like the issuer scripts/region-sentry-ca.sh in cloudgrid mints for
+# Diagrid's own regions: ECDSA P-256, which Sentry requires, and a non-empty
+# subject, which workload certificates take as their issuer DN.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: catalyst-dapr-issuer
+  namespace: {{ .Values.pkiNamespace }}
+spec:
+  secretName: catalyst-dapr-issuer
+  isCA: true
+  commonName: dapr-sentry
+  subject:
+    organizations:
+    - prj-root.trust.diagrid.io
+    organizationalUnits:
+    - root-dapr-system
+  usages:
+  - digital signature
+  - cert sign
+  - crl sign
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  duration: 8760h   # 1 year
+  renewBefore: 720h # 30 days
+  issuerRef:
+    name: catalyst-dapr-root-ca
+    kind: Issuer
+---
+# The trust anchors, which the agent reads once, at boot. Changing
+# files/dapr-trust-anchors.pem changes what this region presents when it joins,
+# and the control plane refuses a set it has not pinned: an admin rejoin has to
+# come first (README.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalyst-dapr-trust-anchors
+  namespace: {{ .Values.pkiNamespace }}
+data:
+  ca.crt: {{ required "files/dapr-trust-anchors.pem is missing or empty" (.Files.Get "files/dapr-trust-anchors.pem") | quote }}
