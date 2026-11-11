@@ -97,6 +97,16 @@ catalyst:
       # has the reader side.
       release_availability:
         enabled: true
+        # enabled on its own starts nothing: rc.23 logged "not starting release
+        # availability publisher: release resolver endpoint is required" and
+        # wrote no ConfigMap. The agent calls the resolver over mutual TLS, so
+        # the outbound HTTPS must reach it uninspected.
+        endpoint: https://catalyst-releases.r1.diagrid.io
+        # Seconds between refreshes; 300 is the default. A decision carries an
+        # expiresAt about 15 minutes out, so the default refreshes it three
+        # times over and whoever reads the ConfigMap still has to check that
+        # expiresAt has not passed.
+        interval_in_sec: 300
         # The chart turns each reader into a Role and RoleBinding for `get` on
         # that one ConfigMap, and drops the key before writing the agent config
         # (the agent has no such setting). argocd-repo-server is the only ArgoCD
