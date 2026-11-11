@@ -14,6 +14,14 @@ postgresql:
   global:
     defaultStorageClass: longhorn
 
+  # The image that was running on 2026-11-11, PostgreSQL 18.6. Left alone the
+  # chart uses bitnami/postgresql:latest with IfNotPresent, so a restart on a
+  # node without it cached pulls whatever latest is that day, and a new major
+  # version refuses the data directory. Moving off it is a deliberate change
+  # to this digest, with a dump in hand when it is a major.
+  image:
+    digest: sha256:b418fd5f001c272aad93ac1febf783f543ee45d8e359d58bd5afc3d2a9b62290
+
   primary:
     networkPolicy:
       # Off because the `home-cluster` AppProject blacklists NetworkPolicy, so
@@ -27,9 +35,38 @@ postgresql:
       enabled: false
 
     # Catalyst's Dapr state store needs logical replication.
-    extendedConfiguration: wal_level = logical
+    #
+    # max_connections is up from the default 100, 3 of them reserved for
+    # superusers. At rest there are about 40 (2026-11-11): 21 from the Dapr
+    # scheduler, 6 walsenders, 5 on db_region and a handful from the
+    # project's stores. A rollout is what runs out. Each Catalyst sidecar
+    # pools up to 8 connections for its workflow store and 8 for its actor
+    # state, plus 2 each for KV and AI-agent state. When the agent rolls them
+    # all, old and new pods hold pools at the same time. On 2026-11-11 that
+    # happened while the scheduler rolled too, and the new sidecars
+    # crash-looped for three minutes on SQLSTATE 53300 until the old ones let
+    # go. 200 leaves room for that overlap to double as app IDs are added.
+    #
+    # Changing this file's settings restarts the pod: the StatefulSet carries
+    # a checksum of them, and max_connections needs a restart anyway.
+    extendedConfiguration: |
+      wal_level = logical
+      max_connections = 200
     persistence:
       # Matches the live volumeClaimTemplate. volumeClaimTemplates are
       # immutable, so changing this means recreating the StatefulSet by hand.
       size: 1Gi
-    resourcesPreset: small
+    # The small preset, spelled out, with the memory limit raised from 768Mi
+    # to go with max_connections: every backend has memory of its own, and an
+    # OOM kill at the peak of a rollout is worse than the refused connections
+    # this fixes. The requests are the preset's, so scheduling is unchanged.
+    # At rest the container uses about 180Mi.
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+        ephemeral-storage: 50Mi
+      limits:
+        cpu: 750m
+        memory: 1536Mi
+        ephemeral-storage: 2Gi
