@@ -1,0 +1,9 @@
+# What the adapter imports, pinned. The cluster installs requirements.lock,
+# which is generated from this file with a hash for every package; change
+# this, then regenerate the lock and review its diff (README.md,
+# "Dependencies").
+ib_async==2.1.0
+fastapi==0.161.1
+uvicorn==0.54.0
+# The 1.x line, which polymarket-mcp already runs in this cluster.
+mcp==1.30.0

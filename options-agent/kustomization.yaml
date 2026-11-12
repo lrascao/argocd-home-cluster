@@ -1,0 +1,30 @@
+# Kustomize, unlike the plain-manifest apps in this repo, so code and limits
+# are not copied into hand-kept ConfigMaps: the generators below read the real
+# files, and each ConfigMap's name carries a hash of its contents, so changing
+# the adapter or limits.env rolls the pod. A new module under
+# broker-ibkr/broker_ibkr/ must be added to `files`. No `namespace:` field,
+# which would also rename the Namespace object; every manifest names its own.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- namespace.yaml
+- sealed-secret.yaml
+- deployment.yaml
+- service.yaml
+configMapGenerator:
+- name: broker-ibkr-src
+  namespace: options-agent
+  files:
+  - broker-ibkr/broker_ibkr/__init__.py
+  - broker-ibkr/broker_ibkr/app.py
+  - broker-ibkr/broker_ibkr/ibkr.py
+  - broker-ibkr/broker_ibkr/limits.py
+  - broker-ibkr/broker_ibkr/models.py
+  - broker-ibkr/broker_ibkr/occ.py
+  # Generated from requirements.txt with hashes; Kustomize refuses to build
+  # until it exists (broker-ibkr/README.md, "Dependencies").
+  - broker-ibkr/requirements.lock
+- name: options-agent-limits
+  namespace: options-agent
+  envs:
+  - limits.env

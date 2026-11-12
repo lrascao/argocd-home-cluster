@@ -1,0 +1,190 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker-ibkr
+  namespace: options-agent
+  labels:
+    app: broker-ibkr
+spec:
+  # IBKR allows one session per username: a second pod logging in with the
+  # same paper username logs the first one out. So one replica, and Recreate
+  # so a rollout never runs two at once.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: broker-ibkr
+  template:
+    metadata:
+      labels:
+        app: broker-ibkr
+    spec:
+      enableServiceLinks: false
+      containers:
+      # IB Gateway under IBC, from our own image
+      # (ansible-local-network/services/ib-gateway): IBKR's installer and an
+      # IBC release, each checked against a recorded sha256, no sudo, ssh, VNC
+      # or socat. IBC logs in with the paper login and restarts the Gateway
+      # every night. Its API answers on the pod's loopback only, port 4002,
+      # where the adapter connects.
+      #
+      # No probes: the nightly restart closes the API port for a minute or so,
+      # which a liveness probe would turn into a pod restart. If the Gateway
+      # dies for good, ibcstart.sh exits and so does the container.
+      - name: ib-gateway
+        # Pin the digest `make release` prints: <tag>@sha256:<digest>.
+        image: registry.88288338.xyz/ib-gateway:0.1.0@sha256:d61703f52d552f991802bd387e315a189c1c29c122834a625fe17de6633acb25
+        env:
+        - name: TRADING_MODE
+          value: paper
+        - name: TWS_USERID
+          valueFrom:
+            secretKeyRef:
+              name: options-agent
+              key: TWS_USERID
+        - name: TWS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: options-agent
+              key: TWS_PASSWORD
+        - name: API_PORT
+          value: "4002"
+        # Daily restart without a fresh login, after the US close, in TIME_ZONE.
+        - name: AUTO_RESTART_TIME
+          value: "11:45 PM"
+        - name: TIME_ZONE
+          value: Europe/Lisbon
+        - name: TZ
+          value: Europe/Lisbon
+        # IBC's config, with the password in it, lives here: memory only.
+        - name: RUN_DIR
+          value: /run/ibc
+        resources:
+          requests:
+            cpu: 100m
+            memory: 1Gi
+          limits:
+            memory: 1536Mi
+        # Not readOnlyRootFilesystem: Xvfb and the JVM write outside the
+        # mounted paths. The image's own files are root-owned, so uid 1000
+        # cannot change them either way.
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: gateway-home
+          mountPath: /home/ibgateway
+        - name: ibc-run
+          mountPath: /run/ibc
+      # The adapter: the MCP server the agent trades through, and the hard
+      # limits. Its code comes from the broker-ibkr-src ConfigMap, which
+      # kustomization.yaml generates from broker-ibkr/, so there is no image
+      # to build. It holds the Gateway's API, which trades without a
+      # password, so its dependencies are installed from requirements.lock
+      # with --require-hashes: every package, transitive ones included, must
+      # match a recorded hash or nothing starts. --no-deps means nothing comes
+      # in that the lock does not name. PyPI must be reachable on each start.
+      - name: broker
+        image: ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim@sha256:6ff812e34a0e14b4b8bc9ddf25e77b3e16bac6e0c4d9b67641f40366fa382d4c
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          uv venv --quiet /tmp/venv
+          uv pip install --quiet --python /tmp/venv --require-hashes --no-deps -r /app/broker_ibkr/requirements.lock
+          exec /tmp/venv/bin/uvicorn broker_ibkr.app:app --app-dir /app --host 0.0.0.0 --port 8080 --loop asyncio
+        env:
+        - name: IBKR_HOST
+          value: 127.0.0.1
+        - name: IBKR_PORT
+          value: "4002"
+        # Delayed quotes until the account has the OPRA subscription shared
+        # with paper; then 1.
+        - name: IBKR_MARKET_DATA_TYPE
+          value: "3"
+        # The bearer token the MCPServer sends. Without it every call but
+        # /healthz gets 401.
+        - name: BROKER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: options-agent
+              key: BROKER_TOKEN
+        - name: UV_CACHE_DIR
+          value: /cache
+        - name: UV_PYTHON_DOWNLOADS
+          value: never
+        - name: HOME
+          value: /tmp
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        # The hard limits, from limits.env.
+        envFrom:
+        - configMapRef:
+            name: options-agent-limits
+        ports:
+        - name: http
+          containerPort: 8080
+        # /healthz says the process is up, not that IB Gateway is: while the
+        # Gateway restarts, the API answers 503 with the reason, which tells a
+        # caller more than an empty Service would.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 5
+          failureThreshold: 36
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 30
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 20m
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: src
+          mountPath: /app/broker_ibkr
+          readOnly: true
+        - name: uv-cache
+          mountPath: /cache
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: src
+        configMap:
+          name: broker-ibkr-src
+      - name: uv-cache
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      # The Gateway's settings and logs. Empty on every pod start, so every
+      # start is a full login; the nightly restart inside the pod is not.
+      - name: gateway-home
+        emptyDir: {}
+      - name: ibc-run
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Mi

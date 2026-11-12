@@ -1,0 +1,20 @@
+# ClusterIP only: Catalyst's MCPServer sidecar runs in this cluster and dials
+# http://broker.options-agent.svc.cluster.local:8080/mcp with the bearer token.
+# Only the adapter's port is published. IB Gateway's API answers on the pod's
+# loopback only (README.md, "What is exposed").
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker
+  namespace: options-agent
+  labels:
+    app: broker-ibkr
+spec:
+  type: ClusterIP
+  selector:
+    app: broker-ibkr
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
