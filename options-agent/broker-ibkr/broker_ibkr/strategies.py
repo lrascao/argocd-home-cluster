@@ -3,9 +3,10 @@
 Several strategies trade the same account side by side, each run by its own
 agent, and the token a call carries says which strategy it is from:
 
-- a token the region's Sentry signs for the calling agent (callers.py), which
-  one MCPServer sends for every agent: options-<id> is strategy <id>, and
-  options-trader is the desk;
+- through one MCPServer for every agent, the calling agent's App ID, which
+  counts with the token the region's Sentry signs for that MCPServer
+  (callers.py): options-<id> is strategy <id>, and options-trader is the
+  desk;
 - a strategy's static bearer token (STRATEGY_TOKENS), sent by an MCPServer of
   that strategy's own;
 - the admin token (BROKER_TOKEN), the desk, which people and scripts use on
@@ -109,14 +110,15 @@ class Auth:
         if self._callers is not None and bearer is not None and callers.looks_like_one(bearer):
             await self._callers.prepare(bearer)
 
-    def identify(self, authorization: str) -> str | None:
-        """Who an Authorization header says is calling: a strategy's id, DESK
-        for the desk's agent or the admin token, or None for neither. With no
-        admin token set (a laptop), anything else is the desk."""
+    def identify(self, authorization: str, caller: str = "") -> str | None:
+        """Who is calling, by the Authorization header and, with a Sentry
+        token, the dapr-caller-app-id header: a strategy's id, DESK for the
+        desk's agent or the admin token, or None for neither. With no admin
+        token set (a laptop), anything else is the desk."""
         bearer = _bearer(authorization)
         if bearer is not None:
             if self._callers is not None and callers.looks_like_one(bearer):
-                who = self._callers.identify(bearer)
+                who = self._callers.identify(bearer, caller)
                 if who is not None:
                     return who
             given = bearer.encode()

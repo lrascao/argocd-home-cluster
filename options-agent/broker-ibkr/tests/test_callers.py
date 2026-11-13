@@ -60,56 +60,70 @@ def _callers(issuer: Issuer, clock: Clock | None = None) -> callers.Callers:
         audience=AUDIENCE,
         trust_domain="td.example",
         namespace="prj-1",
+        mcpserver_app_id="broker",
         desk_app_id="options-trader",
         strategy_app_prefix="options-",
         is_strategy=lambda sid: sid == "put-spread",
     )
 
 
-def _token(app_id: str = "options-put-spread", *, key=KEY, kid: str = "k1", algorithm: str = "RS256", **claims) -> str:
+def _token(app_id: str = "broker", *, key=KEY, kid: str = "k1", algorithm: str = "RS256", **claims) -> str:
     now = int(time.time())
     body = {"sub": APPS + app_id, "iss": ISSUER, "aud": AUDIENCE, "iat": now, "nbf": now - 5, "exp": now + 3600}
     body = {k: v for k, v in (body | claims).items() if v is not None}
     return jwt.encode(body, key, algorithm=algorithm, headers={"kid": kid})
 
 
-def _identify(c: callers.Callers, token: str) -> str | None:
+def _identify(c: callers.Callers, token: str, caller: str = "options-put-spread") -> str | None:
     asyncio.run(c.prepare(token))
-    return c.identify(token)
+    return c.identify(token, caller)
 
 
-# --- who a token says is calling ---------------------------------------------
+# --- who is calling ------------------------------------------------------------
 
 
-def test_the_desks_agent_is_the_desk_and_a_strategys_agent_is_that_strategy():
+def test_through_the_mcpserver_the_desks_agent_is_the_desk_and_a_strategys_is_that_strategy():
     c = _callers(Issuer(PUBLIC))
-    assert _identify(c, _token("options-trader")) == DESK
-    assert _identify(c, _token("options-put-spread")) == "put-spread"
+    assert _identify(c, _token(), "options-trader") == DESK
+    assert _identify(c, _token(), "options-put-spread") == "put-spread"
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "options-iron-condor",  # no strategy file
+        "options-put-spread-sandbox-guest",
+        "options-put-spread/extra",
+        "whatsapp-agent",
+        "trader",
+        "",  # no dapr-caller-app-id
+    ],
+)
+def test_any_other_agent_is_no_one(caller):
+    assert _identify(_callers(Issuer(PUBLIC)), _token(), caller) is None
 
 
 @pytest.mark.parametrize(
     "app_id",
     [
-        "options-iron-condor",  # no strategy file
-        "options-put-spread-sandbox-guest",  # another identity of the same agent's pod
-        "options-put-spread/extra",
-        "whatsapp-agent",
-        "trader",
+        "options-put-spread",  # an agent's own token: it did not come through the MCPServer
+        "broker-put-spread",  # another MCPServer's
     ],
 )
-def test_any_other_agent_is_no_one(app_id):
+def test_only_the_mcpservers_token_counts(app_id):
     assert _identify(_callers(Issuer(PUBLIC)), _token(app_id)) is None
 
 
 @pytest.mark.parametrize(
     "subject",
     [
-        "spiffe://td.example/ns/prj-2/options-put-spread",  # another project
-        "spiffe://other.example/ns/prj-1/options-put-spread",  # another trust domain
-        "options-put-spread",
+        "spiffe://td.example/ns/prj-2/broker",  # another project
+        "spiffe://other.example/ns/prj-1/broker",  # another trust domain
+        "spiffe://td.example/ns/prj-1/broker/extra",
+        "broker",
     ],
 )
-def test_an_agent_outside_the_project_is_no_one(subject):
+def test_a_token_from_outside_the_project_counts_for_no_one(subject):
     assert _identify(_callers(Issuer(PUBLIC)), _token(sub=subject)) is None
 
 
@@ -189,16 +203,22 @@ def test_a_discovery_document_for_another_issuer_gives_no_keys():
 
 def test_sentry_tokens_and_static_tokens_both_count():
     auth = strategies.Auth("admin", {"aaa": "iron-condor"}, _callers(Issuer(PUBLIC)))
-    for header, who in [
-        (f"Bearer {_token('options-put-spread')}", "put-spread"),
-        (f"Bearer {_token('options-trader')}", DESK),
-        (f"Bearer {_token('whatsapp-agent')}", None),
-        ("Bearer aaa", "iron-condor"),
-        ("Bearer admin", DESK),
-        (_token("options-put-spread"), None),  # no "Bearer "
+    token = _token()
+    for header, caller, who in [
+        (f"Bearer {token}", "options-put-spread", "put-spread"),
+        (f"Bearer {token}", "options-trader", DESK),
+        (f"Bearer {token}", "whatsapp-agent", None),
+        (f"Bearer {token}", "", None),
+        ("Bearer aaa", "", "iron-condor"),
+        ("Bearer admin", "", DESK),
+        # Without the MCPServer's token the caller header counts for nothing.
+        ("Bearer aaa", "options-put-spread", "iron-condor"),
+        ("Bearer admin", "options-put-spread", DESK),
+        ("Bearer nope", "options-put-spread", None),
+        (token, "options-put-spread", None),  # no "Bearer "
     ]:
         asyncio.run(auth.prepare(header))
-        assert auth.identify(header) == who, header[:20]
+        assert auth.identify(header, caller) == who, (header[:20], caller)
 
 
 def test_caller_tokens_are_off_unless_fully_configured(monkeypatch):

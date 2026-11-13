@@ -67,9 +67,10 @@ Settings come from the environment:
 | `IBKR_ALLOW_LIVE` | unset | `true` lets it place orders on a non-paper account |
 | `BROKER_TOKEN` | unset | the desk's (admin's) token; when set, every call but `/healthz` needs `Authorization: Bearer <token>` or a strategy's |
 | `STRATEGY_TOKENS` | unset | `<id>=<token>,...`: each strategy's token |
-| `CALLER_TOKEN_ISSUER` | unset | the Sentry issuer whose tokens say which agent is calling ([callers.py](broker_ibkr/callers.py)); unset, only the tokens above count |
-| `CALLER_TOKEN_AUDIENCE` | unset | the audience those tokens must name: the MCPServer's `--spiffe-jwt-audience` |
-| `CALLER_TRUST_DOMAIN` / `CALLER_NAMESPACE` | unset | the agents' SPIFFE trust domain and namespace; a token for an app anywhere else is refused |
+| `CALLER_TOKEN_ISSUER` | unset | the Sentry issuer of the token the MCPServer's sidecar sends ([callers.py](broker_ibkr/callers.py)); with it, the `dapr-caller-app-id` header says which agent is calling; unset, only the tokens above count |
+| `CALLER_TOKEN_AUDIENCE` | unset | the audience that token must name: the MCPServer's `--spiffe-jwt-audience` |
+| `CALLER_TRUST_DOMAIN` / `CALLER_NAMESPACE` | unset | the project's SPIFFE trust domain and namespace |
+| `MCPSERVER_APP_ID` | `broker` | the MCPServer's App ID: a token for any other app is refused |
 | `DESK_APP_ID` | `options-trader` | the agent that is the desk |
 | `STRATEGY_APP_PREFIX` | `options-` | the agent `options-<id>` is strategy `<id>`, if `<id>.toml` exists |
 | `STRATEGIES_DIR` | unset | where the strategy files are; unset, no strategy can open anything |
@@ -102,8 +103,9 @@ only.
 The MCP server is at `/mcp`; each tool is also a REST call under `/v1`.
 
 The token says who is calling ([strategies.py](broker_ibkr/strategies.py)):
-the token the region's Sentry signs for the calling agent
-([callers.py](broker_ibkr/callers.py)), or a strategy's own token. A strategy
+with the token the region's Sentry signs for the MCPServer, the calling
+agent's App ID ([callers.py](broker_ibkr/callers.py)), or a strategy's own
+token. A strategy
 sees and trades only its own orders and positions. The desk, its agent or the
 admin token, sees every strategy's, and on REST can act as one with
 `?strategy=<id>`, or as itself with `?strategy=desk`.

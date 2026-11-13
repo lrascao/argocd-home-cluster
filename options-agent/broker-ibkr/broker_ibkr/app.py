@@ -6,9 +6,9 @@
   paper session in README.md).
 
 Every call but /healthz needs a bearer token, and the token says who is
-calling (strategies.py): the token the region's Sentry signs for the calling
-agent (callers.py), or a strategy's own token (STRATEGY_TOKENS), is that
-strategy, which sees and trades only its own orders and positions; the desk's
+calling (strategies.py): the calling agent's App ID, with the token the
+region's Sentry signs for the MCPServer it came through (callers.py), or a
+strategy's own token (STRATEGY_TOKENS), is that strategy, which sees and trades only its own orders and positions; the desk's
 agent and the admin token (BROKER_TOKEN) are the desk, which sees everything
 and, on REST, can act as a strategy with ?strategy=<id>. Everything is async
 on purpose: ib_async is not thread-safe, and FastAPI runs plain `def` routes
@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from . import limits, models, strategies
+from . import callers, limits, models, strategies
 from .ibkr import Forbidden, IBKRBroker, NotFound, NotReady, Refused, Settings, View
 from .ledger import Ledger
 from .models import DESK
@@ -51,13 +51,18 @@ def _request(client_order_id: str, legs: list[models.Leg], quantity: int, limit_
 # --- MCP: what the agents see. The docstrings are their manual. -------------
 
 
+def _identify(request: Request) -> str | None:
+    return auth.identify(request.headers.get("authorization", ""), request.headers.get(callers.CALLER_HEADER, ""))
+
+
 def _view(ctx: Context) -> View:
     """Who is calling, from the token the MCPServer sent. The MCP server runs
     each call in a task of its own, so the HTTP request is read from the
     call's context, not from anything the middleware set; the middleware has
-    already fetched any keys a Sentry token needs."""
+    already fetched any keys a Sentry token needs. Its headers are the HTTP
+    request's, so the caller's App ID is there too."""
     request = ctx.request_context.request
-    who = auth.identify(request.headers.get("authorization", "")) if request is not None else None
+    who = _identify(request) if request is not None else None
     if who is None:
         raise Forbidden("missing or wrong bearer token")
     return View(who, sees_all=who == DESK)
@@ -239,9 +244,8 @@ app = FastAPI(title="broker", version="1", lifespan=lifespan)
 @app.middleware("http")
 async def _require_token(request: Request, call_next):
     if request.url.path != "/healthz":
-        authorization = request.headers.get("authorization", "")
-        await auth.prepare(authorization)
-        if auth.identify(authorization) is None:
+        await auth.prepare(request.headers.get("authorization", ""))
+        if _identify(request) is None:
             return JSONResponse({"detail": "missing or wrong bearer token"}, status_code=401)
     return await call_next(request)
 
@@ -267,7 +271,7 @@ def _caller(
     request: Request,
     strategy: str | None = Query(None, description="the desk's token only: act as this strategy, or as desk"),
 ) -> View:
-    who = auth.identify(request.headers.get("authorization", ""))
+    who = _identify(request)
     if who is None:
         raise Forbidden("missing or wrong bearer token")
     if strategy is None:

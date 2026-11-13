@@ -1,22 +1,32 @@
-"""Callers that prove who they are with a token Catalyst's Sentry signs.
+"""Callers that come through one MCPServer, told apart by the agent calling.
 
-An MCPServer created with --spiffe-jwt-header sends, on every call, a token
-the region's Sentry signs for the calling agent. Its subject is the agent's
-SPIFFE ID, spiffe://<trust domain>/ns/<namespace>/<app id>, and Sentry checks
-the app ID against the agent pod's Kubernetes identity before it signs. So one
-MCPServer can serve every agent, and the token, not which MCPServer a call
-came through, says who is calling:
+An agent's MCP call goes from its sidecar to the sidecar of the MCPServer's
+own App ID, which checks the agent's grant and then calls the adapter. That
+second hop carries two things the adapter can rely on:
+
+- a token the region's Sentry signs for the MCPServer's App ID, when the
+  MCPServer is created with --spiffe-jwt-header. It proves the call came
+  through that MCPServer, and so past its grants. It names the MCPServer,
+  not the agent: the MCPServer's sidecar is what calls the adapter.
+- the dapr-caller-app-id header, which Dapr sets to the calling agent's App
+  ID, from the agent's mTLS identity; the MCPServer's sidecar enforces the
+  grants on it and passes it on with the call.
+
+So with a good token from MCPSERVER_APP_ID (broker), the header says who is
+calling:
 
 - DESK_APP_ID (options-trader) is the desk;
 - STRATEGY_APP_PREFIX + <id> (options-<id>) is strategy <id>, as long as
   strategies/<id>.toml exists: a strategy is added with its file, its agent
-  and a grant, and needs no token of its own;
+  and a grant, and needs no token or MCPServer of its own;
 - any other agent is no one.
 
-A token counts only if it is signed by one of the keys the issuer publishes
+The header counts only with such a token: anyone who can reach the adapter
+can send the header, but only the MCPServer's sidecar has the token. A token
+counts only if it is signed by one of the keys the issuer publishes
 (CALLER_TOKEN_ISSUER, through its /.well-known/openid-configuration), names
 that issuer and CALLER_TOKEN_AUDIENCE (what the MCPServer's
---spiffe-jwt-audience says), has not expired, and names an app in
+--spiffe-jwt-audience says), has not expired, and names MCPSERVER_APP_ID in
 CALLER_TRUST_DOMAIN and CALLER_NAMESPACE. The keys come from the issuer, not
 from the cluster's dapr-trust-bundle ConfigMap: in November 2026 its jwks.json
 held a key Sentry did not sign with.
@@ -35,6 +45,9 @@ import jwt
 from .models import DESK
 
 log = logging.getLogger(__name__)
+
+# What Dapr sets to the calling App ID, from its mTLS identity.
+CALLER_HEADER = "dapr-caller-app-id"
 
 # A token signed with a key the adapter has not seen sends it to the issuer
 # for its keys again, but no more often than this, so made-up tokens cannot
@@ -126,6 +139,7 @@ class Callers:
         audience: str,
         trust_domain: str,
         namespace: str,
+        mcpserver_app_id: str,
         desk_app_id: str,
         strategy_app_prefix: str,
         is_strategy: Callable[[str], bool],
@@ -133,7 +147,7 @@ class Callers:
         self._keys = keys
         self._issuer = issuer
         self._audience = audience
-        self._apps = f"spiffe://{trust_domain}/ns/{namespace}/"
+        self._mcpserver = f"spiffe://{trust_domain}/ns/{namespace}/{mcpserver_app_id}"
         self._desk_app_id = desk_app_id
         self._strategy_app_prefix = strategy_app_prefix
         self._is_strategy = is_strategy
@@ -158,6 +172,7 @@ class Callers:
             audience=settings["CALLER_TOKEN_AUDIENCE"],
             trust_domain=settings["CALLER_TRUST_DOMAIN"],
             namespace=settings["CALLER_NAMESPACE"],
+            mcpserver_app_id=os.getenv("MCPSERVER_APP_ID", "broker"),
             desk_app_id=os.getenv("DESK_APP_ID", "options-trader"),
             strategy_app_prefix=os.getenv("STRATEGY_APP_PREFIX", "options-"),
             is_strategy=is_strategy,
@@ -173,8 +188,9 @@ class Callers:
         if kid is not None:
             await self._keys.ensure(kid)
 
-    def identify(self, bearer: str) -> str | None:
-        """DESK or a strategy's id for a good token, None for any other."""
+    def identify(self, bearer: str, caller: str) -> str | None:
+        """DESK or a strategy's id for a good token from the MCPServer and the
+        App ID it says is calling, None for anything else."""
         try:
             kid = _kid(bearer)
             key = self._keys.get(kid) if kid is not None else None
@@ -193,18 +209,20 @@ class Callers:
             log.warning("a caller token was refused: %s", e)
             return None
         subject = str(claims["sub"])
-        who = self._who(subject)
+        if subject != self._mcpserver:
+            log.warning("a caller token for %s was refused: only %s's count", subject, self._mcpserver)
+            return None
+        who = self._who(caller)
         if who is None:
-            log.warning("a caller token for %s was refused: it is not the desk's agent or a strategy's", subject)
-        elif subject not in self._seen:
-            self._seen.add(subject)
-            log.info("%s calls as %s, by its Sentry token", subject, who)
+            log.warning(
+                "a call through %s was refused: its caller %r is not the desk's agent or a strategy's", subject, caller
+            )
+        elif caller not in self._seen:
+            self._seen.add(caller)
+            log.info("%s calls as %s, through %s", caller, who, subject)
         return who
 
-    def _who(self, subject: str) -> str | None:
-        if not subject.startswith(self._apps):
-            return None
-        app_id = subject.removeprefix(self._apps)
+    def _who(self, app_id: str) -> str | None:
         if app_id == self._desk_app_id:
             return DESK
         if not app_id.startswith(self._strategy_app_prefix):

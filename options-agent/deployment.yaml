@@ -134,13 +134,13 @@ spec:
               name: options-agent
               key: STRATEGY_TOKENS
               optional: true
-        # Callers that prove who they are with a token the region's Sentry
-        # signs for their agent (broker_ibkr/callers.py), so one MCPServer,
-        # created with --spiffe-jwt-header, serves every agent: options-<id>
-        # is strategy <id>, DESK_APP_ID is the desk. These are identifiers,
-        # not secrets: the tokens are checked against the keys the issuer
-        # publishes. Without CALLER_TOKEN_ISSUER only the bearer tokens above
-        # count.
+        # One MCPServer for every agent (broker_ibkr/callers.py): a call that
+        # carries the token the region's Sentry signs for MCPServer broker's
+        # App ID, created with --spiffe-jwt-header, is from the agent its
+        # dapr-caller-app-id header names: options-<id> is strategy <id>,
+        # DESK_APP_ID is the desk. These are identifiers, not secrets: the
+        # tokens are checked against the keys the issuer publishes. Without
+        # CALLER_TOKEN_ISSUER only the bearer tokens above count.
         - name: CALLER_TOKEN_ISSUER
           value: https://oidc.r1.diagrid.io/d117358594104023e2135a829599fb74ef8a0c626e8e6de58155af47f82f54ac
         # What the MCPServer's --spiffe-jwt-audience says.
@@ -151,6 +151,9 @@ spec:
           value: shlsowbe.homelab.7a9817cc-30bf-4bc5-89b3-99687a01d85c.private.diagrid.io
         - name: CALLER_NAMESPACE
           value: prj-14384718
+        # The MCPServer's own App ID, which its sidecar's token names.
+        - name: MCPSERVER_APP_ID
+          value: broker
         - name: DESK_APP_ID
           value: options-trader
         - name: STRATEGIES_DIR

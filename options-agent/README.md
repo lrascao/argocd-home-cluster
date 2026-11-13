@@ -50,8 +50,8 @@ IBKR keeps one set of positions for the account and knows nothing of
 strategies, so the adapter keeps that apart itself:
 
 - **The token says who is calling.** Each strategy's MCPServer sends that
-  strategy's token, or one MCPServer sends, for every agent, a token the
-  region's Sentry signs for that agent; see
+  strategy's token, or one MCPServer serves every agent and the adapter
+  takes the calling agent's App ID; see
   [One MCPServer for every agent](#one-mcpserver-for-every-agent). The
   adapter shows a strategy only its own orders and positions, and checks its
   orders against its own limits as well as the account's. The desk sees
@@ -259,15 +259,19 @@ one runs past the next tick; the hard limits are the backstop.
 
 An MCPServer sends the same headers whichever agent calls through it, so with
 bearer tokens each strategy needs an MCPServer of its own, and a token sealed
-for it. Catalyst can instead send, on every call, a token the region's Sentry
-signs for the calling agent: its subject is the agent's SPIFFE ID, which
-Sentry checks against the agent pod's Kubernetes identity, it names the
-audience the MCPServer asks for, and it expires within a day. The adapter
-([callers.py](broker-ibkr/broker_ibkr/callers.py)) checks it against the
-keys the issuer publishes, then takes `options-trader` for the desk and
-`options-<id>` for strategy `<id>`, if `strategies/<id>.toml` exists. Its
-settings are in [deployment.yaml](deployment.yaml); both kinds of token count
-side by side, so the agents move over one at a time.
+for it. But an agent's call reaches the adapter through the sidecar of the
+MCPServer's own App ID, which checks the agent's grant and passes on the
+`dapr-caller-app-id` header Dapr sets to the calling agent's App ID, from its
+mTLS identity. Created with `--spiffe-jwt-header`, the MCPServer also sends a
+token the region's Sentry signs for that App ID, `broker`: it names the
+audience the MCPServer asks for and expires within a day. The adapter
+([callers.py](broker-ibkr/broker_ibkr/callers.py)) checks the token against
+the keys the issuer publishes, which proves the call came through `broker`
+and past its grants, then takes the header's `options-trader` for the desk
+and `options-<id>` for strategy `<id>`, if `strategies/<id>.toml` exists.
+Without that token the header counts for nothing. Its settings are in
+[deployment.yaml](deployment.yaml); both kinds of token count side by side,
+so the agents move over one at a time.
 
 The CLI sets Sentry tokens only on `mcpserver create`, so `broker` is made
 again. The desk goes first: it only reads, so if something is off, nothing
@@ -279,13 +283,12 @@ diagrid mcpserver create broker --project test --url http://broker.options-agent
 diagrid mcpserver access grant broker --project test --caller options-trader --allow-tools get_status,list_strategies,get_account,get_positions,get_quotes,get_option_chain,get_order,list_open_orders
 kubectl -n prj-14384718 delete pod -l cra.diagrid.io/app-id=options-trader
 diagrid managed-agent chat -m "Call get_status and tell me who it says the caller is." --agent options-trader --project test
-kubectl -n options-agent logs deploy/broker-ibkr -c broker | grep -E 'calls as|caller token'
+kubectl -n options-agent logs deploy/broker-ibkr -c broker | grep -E 'calls as|refused'
 ```
 
 The agent should say the caller is `desk`, and the log should have
-`spiffe://.../options-trader calls as desk, by its Sentry token`. A
-`caller token was refused` line says why it was not: a wrong trust domain or
-namespace shows the subject the token had.
+`options-trader calls as desk, through spiffe://.../broker`. A `refused` line
+says why it was not, with the token's subject or the caller it named.
 
 Then each strategy, which starts every run by checking that `get_status`
 names it as the caller:
