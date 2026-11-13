@@ -63,6 +63,8 @@ def _view(ctx: Context) -> View:
     request's, so the caller's App ID is there too."""
     request = ctx.request_context.request
     who = _identify(request) if request is not None else None
+    if who == callers.MCPSERVER_CHECK:
+        raise Forbidden("no agent is calling: the MCPServer's own check may list the tools, not call them")
     if who is None:
         raise Forbidden("missing or wrong bearer token")
     return View(who, sees_all=who == DESK)
@@ -118,9 +120,10 @@ async def list_strategies(ctx: Context) -> list[models.StrategyStatus]:
 
 
 @mcp.tool()
-async def get_account() -> models.Account:
+async def get_account(ctx: Context) -> models.Account:
     """Net liquidation value, available funds and buying power, in the
     account's base currency."""
+    _view(ctx)  # any caller but the MCPServer's own check
     return await broker.account_summary()
 
 
@@ -136,7 +139,7 @@ async def get_positions(ctx: Context) -> list[models.Position]:
 
 
 @mcp.tool()
-async def get_quotes(symbols: list[str]) -> list[models.Quote]:
+async def get_quotes(symbols: list[str], ctx: Context) -> list[models.Quote]:
     """Bid, ask, last and close, and greeks for options, for 1 to 50 symbols:
     stock tickers or OCC option symbols. Quotes are delayed. A symbol that
     does not exist comes back with error "no such contract". The answer comes
@@ -144,18 +147,20 @@ async def get_quotes(symbols: list[str]) -> list[models.Quote]:
     the first time can come back without its delta, or with error "no quote
     yet", and asking for it again a few seconds later fills it in. Never
     trade a symbol you have not quoted."""
+    _view(ctx)  # any caller but the MCPServer's own check
     if not 1 <= len(symbols) <= 50:
         raise Refused("ask for between 1 and 50 symbols")
     return await broker.quotes(symbols)
 
 
 @mcp.tool()
-async def get_option_chain(underlying: str) -> list[models.Chain]:
+async def get_option_chain(underlying: str, ctx: Context) -> list[models.Chain]:
     """The expirations and strikes listed for a US stock or ETF, under its
     standard OCC root. Not every strike exists at every expiration: build the
     symbol, then quote it to confirm. An OCC symbol is the root padded to 6 characters, the
     expiry as YYMMDD, C or P, and the strike times 1000 in 8 digits:
     "SPY   261218P00450000" is the SPY 450 put expiring 2026-12-18."""
+    _view(ctx)  # any caller but the MCPServer's own check
     return await broker.chains(underlying)
 
 
@@ -245,7 +250,9 @@ app = FastAPI(title="broker", version="1", lifespan=lifespan)
 async def _require_token(request: Request, call_next):
     if request.url.path != "/healthz":
         await auth.prepare(request.headers.get("authorization", ""))
-        if _identify(request) is None:
+        who = _identify(request)
+        # The MCPServer's own check goes no further than the MCP handshake.
+        if who is None or (who == callers.MCPSERVER_CHECK and request.url.path != "/mcp"):
             return JSONResponse({"detail": "missing or wrong bearer token"}, status_code=401)
     return await call_next(request)
 
@@ -272,7 +279,7 @@ def _caller(
     strategy: str | None = Query(None, description="the desk's token only: act as this strategy, or as desk"),
 ) -> View:
     who = _identify(request)
-    if who is None:
+    if who is None or who == callers.MCPSERVER_CHECK:
         raise Forbidden("missing or wrong bearer token")
     if strategy is None:
         return View(who, sees_all=who == DESK)

@@ -96,11 +96,17 @@ def test_through_the_mcpserver_the_desks_agent_is_the_desk_and_a_strategys_is_th
         "options-put-spread/extra",
         "whatsapp-agent",
         "trader",
-        "",  # no dapr-caller-app-id
     ],
 )
 def test_any_other_agent_is_no_one(caller):
     assert _identify(_callers(Issuer(PUBLIC)), _token(), caller) is None
+
+
+def test_no_caller_is_the_mcpservers_own_check_and_never_a_strategy():
+    assert _identify(_callers(Issuer(PUBLIC)), _token(), "") == callers.MCPSERVER_CHECK
+    assert not strategies.valid_id(callers.MCPSERVER_CHECK)
+    # No check without the MCPServer's token.
+    assert _identify(_callers(Issuer(PUBLIC)), _token("options-put-spread"), "") is None
 
 
 @pytest.mark.parametrize(
@@ -208,7 +214,7 @@ def test_sentry_tokens_and_static_tokens_both_count():
         (f"Bearer {token}", "options-put-spread", "put-spread"),
         (f"Bearer {token}", "options-trader", DESK),
         (f"Bearer {token}", "whatsapp-agent", None),
-        (f"Bearer {token}", "", None),
+        (f"Bearer {token}", "", callers.MCPSERVER_CHECK),
         ("Bearer aaa", "", "iron-condor"),
         ("Bearer admin", "", DESK),
         # Without the MCPServer's token the caller header counts for nothing.

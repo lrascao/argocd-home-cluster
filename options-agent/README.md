@@ -269,7 +269,10 @@ audience the MCPServer asks for and expires within a day. The adapter
 the keys the issuer publishes, which proves the call came through `broker`
 and past its grants, then takes the header's `options-trader` for the desk
 and `options-<id>` for strategy `<id>`, if `strategies/<id>.toml` exists.
-Without that token the header counts for nothing. Its settings are in
+Without that token the header counts for nothing. With the token and no
+header, the call is the MCPServer's own check, which lists the tools before
+the MCPServer turns ready: it gets the MCP handshake and the tool list, and
+no tool. Its settings are in
 [deployment.yaml](deployment.yaml); both kinds of token count side by side,
 so the agents move over one at a time.
 

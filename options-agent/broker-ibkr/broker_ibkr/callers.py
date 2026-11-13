@@ -19,7 +19,11 @@ calling:
 - STRATEGY_APP_PREFIX + <id> (options-<id>) is strategy <id>, as long as
   strategies/<id>.toml exists: a strategy is added with its file, its agent
   and a grant, and needs no token or MCPServer of its own;
-- any other agent is no one.
+- any other agent is no one;
+- no header at all is the MCPServer's own check: before it marks the
+  MCPServer ready, and now and then after, its sidecar connects and lists the
+  tools, with the token but on no agent's behalf. That may list the tools and
+  call none of them; Dapr sets the header on every call an agent makes.
 
 The header counts only with such a token: anyone who can reach the adapter
 can send the header, but only the MCPServer's sidecar has the token. A token
@@ -48,6 +52,8 @@ log = logging.getLogger(__name__)
 
 # What Dapr sets to the calling App ID, from its mTLS identity.
 CALLER_HEADER = "dapr-caller-app-id"
+# Who the MCPServer's own check is. Not a strategy id, so never taken for one.
+MCPSERVER_CHECK = "<mcpserver>"
 
 # A token signed with a key the adapter has not seen sends it to the issuer
 # for its keys again, but no more often than this, so made-up tokens cannot
@@ -190,7 +196,8 @@ class Callers:
 
     def identify(self, bearer: str, caller: str) -> str | None:
         """DESK or a strategy's id for a good token from the MCPServer and the
-        App ID it says is calling, None for anything else."""
+        App ID it says is calling, MCPSERVER_CHECK for a good token and no
+        caller, None for anything else."""
         try:
             kid = _kid(bearer)
             key = self._keys.get(kid) if kid is not None else None
@@ -212,6 +219,8 @@ class Callers:
         if subject != self._mcpserver:
             log.warning("a caller token for %s was refused: only %s's count", subject, self._mcpserver)
             return None
+        if not caller:
+            return MCPSERVER_CHECK
         who = self._who(caller)
         if who is None:
             log.warning(
