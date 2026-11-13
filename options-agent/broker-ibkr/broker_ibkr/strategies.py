@@ -1,10 +1,18 @@
 """Who is calling, and what each strategy may do.
 
 Several strategies trade the same account side by side, each run by its own
-agent. Each agent reaches the adapter through its own MCPServer, which sends
-that strategy's bearer token, so the token is what says which strategy a call
-is from. The admin token (BROKER_TOKEN) is the desk: it sees every strategy's
-orders and positions, and can act as any of them.
+agent, and the token a call carries says which strategy it is from:
+
+- a token the region's Sentry signs for the calling agent (callers.py), which
+  one MCPServer sends for every agent: options-<id> is strategy <id>, and
+  options-trader is the desk;
+- a strategy's static bearer token (STRATEGY_TOKENS), sent by an MCPServer of
+  that strategy's own;
+- the admin token (BROKER_TOKEN), the desk, which people and scripts use on
+  REST.
+
+The desk sees every strategy's orders and positions, and on REST can act as
+any of them.
 
 A strategy is a file, strategies/<id>.toml, mounted from a ConfigMap. It is
 read again on every call that needs it, so an edit reaches the adapter within
@@ -20,7 +28,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import models
+from . import callers, models
 from .models import DESK
 
 log = logging.getLogger(__name__)
@@ -30,6 +38,12 @@ _ID = re.compile(models.STRATEGY_ID)
 
 def valid_id(s: str) -> bool:
     return bool(_ID.match(s)) and s != DESK
+
+
+def exists(directory: str, sid: str) -> bool:
+    """Whether strategy sid has a file, loadable or not: the agent of a
+    strategy whose file does not load can still manage what it holds."""
+    return valid_id(sid) and bool(directory) and (Path(directory) / f"{sid}.toml").is_file()
 
 
 def parse_tokens(value: str) -> dict[str, str]:
@@ -58,11 +72,14 @@ def parse_tokens(value: str) -> dict[str, str]:
 
 
 class Auth:
-    def __init__(self, admin_token: str, strategy_tokens: dict[str, str]) -> None:
+    def __init__(
+        self, admin_token: str, strategy_tokens: dict[str, str], caller_tokens: callers.Callers | None = None
+    ) -> None:
         self._admin = admin_token
         self._tokens = [(t.encode(), sid) for t, sid in strategy_tokens.items()]
         if admin_token:
             self._tokens.append((admin_token.encode(), DESK))
+        self._callers = caller_tokens
 
     @classmethod
     def from_env(cls) -> "Auth":
@@ -71,20 +88,46 @@ class Auth:
         try:
             tokens = parse_tokens(os.getenv("STRATEGY_TOKENS", ""))
         except ValueError as e:
-            log.error("%s; no strategy can call the broker until it is fixed", e)
+            log.error("%s; no strategy's own token works until it is fixed", e)
             tokens = {}
-        return cls(os.getenv("BROKER_TOKEN", ""), tokens)
+        directory = os.getenv("STRATEGIES_DIR", "")
+        return cls(
+            os.getenv("BROKER_TOKEN", ""), tokens, callers.Callers.from_env(lambda sid: exists(directory, sid))
+        )
+
+    async def warm(self) -> None:
+        """Fetch the keys Sentry's tokens are checked with, before the first
+        call needs them."""
+        if self._callers is not None:
+            await self._callers.warm()
+
+    async def prepare(self, authorization: str) -> None:
+        """Fetch any keys a Sentry token needs before identify checks it,
+        since identify cannot wait on the network. The middleware calls it
+        on every request, so the keys are there by the time a tool asks."""
+        bearer = _bearer(authorization)
+        if self._callers is not None and bearer is not None and callers.looks_like_one(bearer):
+            await self._callers.prepare(bearer)
 
     def identify(self, authorization: str) -> str | None:
         """Who an Authorization header says is calling: a strategy's id, DESK
-        for the admin token, or None for neither. With no admin token set (a
-        laptop), anything that is not a strategy's token is the desk."""
-        if authorization.startswith("Bearer "):
-            given = authorization.removeprefix("Bearer ").encode()
+        for the desk's agent or the admin token, or None for neither. With no
+        admin token set (a laptop), anything else is the desk."""
+        bearer = _bearer(authorization)
+        if bearer is not None:
+            if self._callers is not None and callers.looks_like_one(bearer):
+                who = self._callers.identify(bearer)
+                if who is not None:
+                    return who
+            given = bearer.encode()
             for token, who in self._tokens:
                 if hmac.compare_digest(given, token):
                     return who
         return None if self._admin else DESK
+
+
+def _bearer(authorization: str) -> str | None:
+    return authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else None
 
 
 def load(directory: str) -> tuple[dict[str, models.Strategy], dict[str, str]]:

@@ -50,9 +50,12 @@ IBKR keeps one set of positions for the account and knows nothing of
 strategies, so the adapter keeps that apart itself:
 
 - **The token says who is calling.** Each strategy's MCPServer sends that
-  strategy's token. The adapter shows a strategy only its own orders and
-  positions, and checks its orders against its own limits as well as the
-  account's. The admin token is the desk: it sees everything.
+  strategy's token, or one MCPServer sends, for every agent, a token the
+  region's Sentry signs for that agent; see
+  [One MCPServer for every agent](#one-mcpserver-for-every-agent). The
+  adapter shows a strategy only its own orders and positions, and checks its
+  orders against its own limits as well as the account's. The desk sees
+  everything.
 - **Every order carries its strategy**, in its IBKR `orderRef`, so who placed
   what survives a restart.
 - **A ledger records whose fills are whose** (SQLite, on the volume in
@@ -251,6 +254,52 @@ one runs past the next tick; the hard limits are the backstop.
 4. Commit and push; the pod rolls for the new token.
 5. Add `options-<id>` to the `llm-openai` component's scopes, then create its
    MCPServer, apply its agent and grant it, as in step 6.
+
+## One MCPServer for every agent
+
+An MCPServer sends the same headers whichever agent calls through it, so with
+bearer tokens each strategy needs an MCPServer of its own, and a token sealed
+for it. Catalyst can instead send, on every call, a token the region's Sentry
+signs for the calling agent: its subject is the agent's SPIFFE ID, which
+Sentry checks against the agent pod's Kubernetes identity, it names the
+audience the MCPServer asks for, and it expires within a day. The adapter
+([callers.py](broker-ibkr/broker_ibkr/callers.py)) checks it against the
+keys the issuer publishes, then takes `options-trader` for the desk and
+`options-<id>` for strategy `<id>`, if `strategies/<id>.toml` exists. Its
+settings are in [deployment.yaml](deployment.yaml); both kinds of token count
+side by side, so the agents move over one at a time.
+
+The CLI sets Sentry tokens only on `mcpserver create`, so `broker` is made
+again. The desk goes first: it only reads, so if something is off, nothing
+can trade wrong.
+
+```bash
+diagrid mcpserver delete broker --project test
+diagrid mcpserver create broker --project test --url http://broker.options-agent.svc.cluster.local:8080/mcp --timeout 30s --spiffe-jwt-header Authorization --spiffe-jwt-prefix "Bearer " --spiffe-jwt-audience broker.options-agent.svc.cluster.local --description "IBKR paper options broker; each agent calls as itself" --wait
+diagrid mcpserver access grant broker --project test --caller options-trader --allow-tools get_status,list_strategies,get_account,get_positions,get_quotes,get_option_chain,get_order,list_open_orders
+kubectl -n prj-14384718 delete pod -l cra.diagrid.io/app-id=options-trader
+diagrid managed-agent chat -m "Call get_status and tell me who it says the caller is." --agent options-trader --project test
+kubectl -n options-agent logs deploy/broker-ibkr -c broker | grep -E 'calls as|caller token'
+```
+
+The agent should say the caller is `desk`, and the log should have
+`spiffe://.../options-trader calls as desk, by its Sentry token`. A
+`caller token was refused` line says why it was not: a wrong trust domain or
+namespace shows the subject the token had.
+
+Then each strategy, which starts every run by checking that `get_status`
+names it as the caller:
+
+```bash
+diagrid mcpserver access grant broker --project test --caller options-put-spread --allow-tools get_status,get_strategy,get_account,get_positions,get_quotes,get_option_chain,preview_order,place_order,get_order,list_open_orders,cancel_order
+diagrid mcpserver delete broker-put-spread --project test
+kubectl -n prj-14384718 delete pod -l cra.diagrid.io/app-id=options-put-spread
+diagrid managed-agent chat -m "Carry out your instructions." --agent options-put-spread --project test
+```
+
+and the same for `iron-condor`. Once no MCPServer sends them,
+`STRATEGY_TOKENS` can go from the sealed secret; `BROKER_TOKEN` stays, for
+calls by hand.
 
 ## When the ledger and IBKR disagree
 

@@ -6,11 +6,13 @@
   paper session in README.md).
 
 Every call but /healthz needs a bearer token, and the token says who is
-calling (strategies.py): a strategy's token (STRATEGY_TOKENS) is that
-strategy, which sees and trades only its own orders and positions; the admin
-token (BROKER_TOKEN) is the desk, which sees everything and, on REST, can act
-as a strategy with ?strategy=<id>. Everything is async on purpose: ib_async is
-not thread-safe, and FastAPI runs plain `def` routes on a thread pool.
+calling (strategies.py): the token the region's Sentry signs for the calling
+agent (callers.py), or a strategy's own token (STRATEGY_TOKENS), is that
+strategy, which sees and trades only its own orders and positions; the desk's
+agent and the admin token (BROKER_TOKEN) are the desk, which sees everything
+and, on REST, can act as a strategy with ?strategy=<id>. Everything is async
+on purpose: ib_async is not thread-safe, and FastAPI runs plain `def` routes
+on a thread pool.
 """
 
 import asyncio
@@ -50,9 +52,10 @@ def _request(client_order_id: str, legs: list[models.Leg], quantity: int, limit_
 
 
 def _view(ctx: Context) -> View:
-    """Who is calling, from the bearer token the MCPServer sent. The MCP
-    server runs each call in a task of its own, so the HTTP request is read
-    from the call's context, not from anything the middleware set."""
+    """Who is calling, from the token the MCPServer sent. The MCP server runs
+    each call in a task of its own, so the HTTP request is read from the
+    call's context, not from anything the middleware set; the middleware has
+    already fetched any keys a Sentry token needs."""
     request = ctx.request_context.request
     who = auth.identify(request.headers.get("authorization", "")) if request is not None else None
     if who is None:
@@ -217,12 +220,16 @@ mcp_app = mcp.streamable_http_app()  # creates mcp.session_manager, run in lifes
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     task = asyncio.create_task(broker.run())
+    # Sentry's keys, fetched in the background: a call that comes first waits
+    # for them.
+    keys = asyncio.create_task(auth.warm())
     try:
         # A mounted app's own lifespan never runs, so start MCP's here.
         async with mcp.session_manager.run():
             yield
     finally:
         task.cancel()
+        keys.cancel()
         broker.ib.disconnect()
 
 
@@ -231,8 +238,11 @@ app = FastAPI(title="broker", version="1", lifespan=lifespan)
 
 @app.middleware("http")
 async def _require_token(request: Request, call_next):
-    if request.url.path != "/healthz" and auth.identify(request.headers.get("authorization", "")) is None:
-        return JSONResponse({"detail": "missing or wrong bearer token"}, status_code=401)
+    if request.url.path != "/healthz":
+        authorization = request.headers.get("authorization", "")
+        await auth.prepare(authorization)
+        if auth.identify(authorization) is None:
+            return JSONResponse({"detail": "missing or wrong bearer token"}, status_code=401)
     return await call_next(request)
 
 

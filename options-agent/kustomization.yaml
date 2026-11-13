@@ -21,6 +21,7 @@ configMapGenerator:
   files:
   - broker-ibkr/broker_ibkr/__init__.py
   - broker-ibkr/broker_ibkr/app.py
+  - broker-ibkr/broker_ibkr/callers.py
   - broker-ibkr/broker_ibkr/ibkr.py
   - broker-ibkr/broker_ibkr/ledger.py
   - broker-ibkr/broker_ibkr/limits.py

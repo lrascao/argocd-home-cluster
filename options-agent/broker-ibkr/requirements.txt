@@ -7,3 +7,7 @@ fastapi==0.161.1
 uvicorn==0.54.0
 # The 1.x line, which polymarket-mcp already runs in this cluster.
 mcp==1.30.0
+# Checks the tokens Catalyst's Sentry signs for each agent, and fetches the
+# keys to check them with. Both already came with mcp, at these versions.
+pyjwt[crypto]==2.15.1
+httpx==0.28.1
