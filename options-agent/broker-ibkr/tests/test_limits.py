@@ -92,19 +92,10 @@ def test_eur_per_usd_on_a_dollar_account():
     assert limits.eur_per({"USD": 1.0, "EUR": 1.16}, "USD") == pytest.approx(1 / 1.16)
 
 
-def test_eur_per_falls_back_to_the_market_rate_while_the_account_holds_no_dollars():
-    # IBKR sends an ExchangeRate only for currencies the account holds.
-    assert limits.eur_per({"EUR": 1.0}, "USD", eurusd=1.16) == pytest.approx(1 / 1.16)
-    assert limits.eur_per({}, "USD", eurusd=1.16) == pytest.approx(1 / 1.16)
-
-
-def test_the_account_rate_comes_before_the_market_rate():
-    assert limits.eur_per({"EUR": 1.0, "USD": 0.86}, "USD", eurusd=1.25) == pytest.approx(0.86)
-
-
-def test_eur_per_is_none_without_either_rate():
-    assert limits.eur_per({"EUR": 1.0}, "USD") is None
-    assert limits.eur_per({}, "GBP", eurusd=1.16) is None
+def test_eur_per_is_none_for_a_currency_the_account_does_not_hold():
+    # A euro account that has never held dollars: IBKR sends no dollar rate.
+    assert limits.eur_per({"EUR": 1.0, "BASE": 1.0}, "USD") is None
+    assert limits.eur_per({}, "USD") is None
 
 
 def test_a_euro_is_a_euro():

@@ -150,10 +150,10 @@ of legs an opening order has, and its own kill switch.
   always allowed, kill switches included. Anything else opens risk and must
   pass every limit.
 - **Euros.** Money limits are in euros. A loss is worked out in dollars from
-  the legs and converted at IBKR's own rate: its `ExchangeRate` account
-  values, which it sends only for currencies the account holds, and until
-  the account holds dollars, its EUR.USD quote on IDEALPRO. With neither,
-  nothing opens.
+  the legs and converted at IBKR's own rate, its `$LEDGER-ExchangeRate`
+  account values. IBKR sends one only for each currency the account holds,
+  so a euro account needs a few dollars in it before anything opens (the
+  first paper session below).
 - **One owner per contract.** An opening order is refused on a contract
   another strategy holds or has an order working on, and, for a strategy, on
   one where IBKR holds a position no one in the ledger accounts for.
@@ -215,7 +215,10 @@ curl -s -X DELETE localhost:8090/v1/orders/test-1
 ```
 
 1. Health says `paper: true`, `orders_enabled: true`, `caller: desk`, a
-   value for `eur_per_usd`, and shows the limits.
+   value for `eur_per_usd`, and shows the limits. If `eur_per_usd` is null,
+   the account holds no dollars: convert a few hundred euros to dollars in
+   it (IBKR's app, the paper account, a EUR.USD trade), and within a few
+   minutes IBKR sends the rate.
 2. Quotes come back with prices. If delayed option quotes are empty without
    OPRA, that is the subscription, not the adapter. If a real option comes
    back as `no such contract`, the adapter's lookup by OCC symbol (IBKR's

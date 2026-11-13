@@ -164,7 +164,11 @@ kubectl apply -f playbooks/kubernetes/cluster/argocd/manifests/project.yaml -f p
 Then watch the Gateway log in. It takes a minute or so; until then the adapter
 logs `connecting to IB Gateway ... failed` every 5 seconds, then
 `connected: account=DU... paper=True orders_enabled=True`. `/v1/health` then
-shows `eur_per_usd`; while it is null, nothing opens.
+shows `eur_per_usd`; while it is null, nothing opens. IBKR sends that rate
+only for a currency the account holds, and a new euro paper account holds
+only euros: convert a few hundred to dollars in it once, in IBKR's app, and
+the rate appears within minutes. IBKR gives a paper account no forex quotes
+over the API, so the adapter cannot fetch the rate any other way.
 
 ```bash
 kubectl -n options-agent logs deploy/broker-ibkr -c ib-gateway -f

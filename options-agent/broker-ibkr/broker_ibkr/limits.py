@@ -91,19 +91,15 @@ def positions_risk(positions: Iterable[tuple[occ.OptionSymbol, float, float]]) -
     return sum(max_loss(legs[k], cash[k]) for k in legs)
 
 
-def eur_per(rates: dict[str, float], currency: str, eurusd: float | None = None) -> float | None:
-    """Euros per unit of currency. First from IBKR's ExchangeRate account
-    values, which give each currency in the account's base currency (the base
-    itself at 1), but only for currencies the account holds. Failing that, for
-    dollars, from eurusd, the market's dollars per euro. None if neither."""
+def eur_per(rates: dict[str, float], currency: str) -> float | None:
+    """Euros per unit of currency, from IBKR's exchange rates, which give each
+    currency in the account's base currency (the base itself at 1). IBKR
+    sends them only for currencies the account holds: None for one it does
+    not."""
     if currency == "EUR":
         return 1.0
     unit, eur = rates.get(currency), rates.get("EUR")
-    if unit and eur:
-        return unit / eur
-    if currency == "USD" and eurusd:
-        return 1 / eurusd
-    return None
+    return unit / eur if unit and eur else None
 
 
 def is_close(legs: list[tuple[int, models.Side, float]], held: dict[int, float], working: set[int]) -> bool:
