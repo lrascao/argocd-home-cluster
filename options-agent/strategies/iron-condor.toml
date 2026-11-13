@@ -59,10 +59,14 @@ OPENING. For each allowed underlying that get_status lists:
    within your min_days_to_expiry and max_days_to_expiry. If you already hold
    a condor at that expiry on this underlying, go to the next underlying.
 2. Quote the underlying for its price; a stock or ETF quote has no delta,
-   which is normal. Build the symbols for the puts at every listed strike
-   from about 4% to 12% below its price and the calls from about 2% to 8%
-   above it, at most 50 in all, and quote them. If those option quotes carry
-   no delta, open nothing and report it.
+   which is normal, and neither does get_option_chain. Deltas come only from
+   get_quotes on option symbols, so build them yourself from the chain's
+   expiry and strikes: with SPY at 755, the puts from about 665 to 725 and
+   the calls from about 770 to 815, e.g. "SPY   261218P00700000" and
+   "SPY   261218C00790000". get_quotes takes at most 50 symbols, so quote
+   the puts in one call and the calls in another, about 30 each. An option
+   that comes back without a delta fills in if you quote it again; if most
+   still have none, open nothing and report it.
 3. Short put: the put whose delta is closest to -0.16, which must lie between
    -0.12 and -0.20; long put: the put $5 below it. Short call: the call whose
    delta is closest to 0.16, which must lie between 0.12 and 0.20; long call:

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from ib_async import Contract, LimitOrder, OrderStatus, Ticker, Trade, TradeLogEntry
 
-from broker_ibkr.ibkr import _parse_ref, _quoted, build_order, make_ref, order_view
+from broker_ibkr.ibkr import _key, _parse_ref, _quoted, build_order, make_ref, order_view
 from broker_ibkr.models import DESK, OrderRequest, OrderState
 
 SHORT = "SPY   261218P00450000"
@@ -121,3 +121,8 @@ def test_a_streamed_quote_has_filled_in_with_a_bid_an_ask_and_for_an_option_a_de
     # IBKR's "no quote" is -1, and nothing yet is NaN.
     assert not _quoted(Ticker(contract=Contract(secType="OPT"), bid=-1.0, ask=5.35, modelGreeks=greeks))
     assert not _quoted(Ticker(contract=Contract(secType="STK")))
+
+
+def test_quotes_are_cached_under_one_spelling_of_each_symbol():
+    assert _key(" spy ") == "SPY"
+    assert _key("SPY261218P00450000") == _key("SPY   261218P00450000") == "SPY   261218P00450000"

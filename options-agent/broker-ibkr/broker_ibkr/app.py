@@ -130,8 +130,11 @@ async def get_positions(ctx: Context) -> list[models.Position]:
 @mcp.tool()
 async def get_quotes(symbols: list[str]) -> list[models.Quote]:
     """Bid, ask, last and close, and greeks for options, for 1 to 50 symbols:
-    stock tickers or OCC option symbols. A symbol that does not exist comes
-    back with error "no such contract". Never trade a symbol you have not
+    stock tickers or OCC option symbols. Quotes are delayed. A symbol that
+    does not exist comes back with error "no such contract". The answer comes
+    within a few seconds with what has arrived by then: an option quoted for
+    the first time can come back without its delta, and asking for it again
+    a few seconds later fills it in. Never trade a symbol you have not
     quoted."""
     if not 1 <= len(symbols) <= 50:
         raise Refused("ask for between 1 and 50 symbols")

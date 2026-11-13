@@ -15,7 +15,7 @@ import logging
 import math
 import os
 import uuid
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import NamedTuple
@@ -30,9 +30,16 @@ log = logging.getLogger(__name__)
 
 # IBKR reports "no value" as the largest double, and "no quote" as -1.
 _UNSET = 1e300
-# How long get_quotes waits for a quote to fill in. Delayed ticks take a
-# few seconds; a closed market never fills in, and costs the whole wait.
-_QUOTE_WAIT = 6.0
+# Catalyst's MCP proxy gives a call 5 seconds, whatever the MCPServer's
+# timeout says (seen 2026-11-13). So get_quotes answers within 4 seconds of
+# being called, contract lookups included, with whatever has filled in by
+# then: delayed option ticks take 2-3 seconds to arrive, and a closed market
+# never fills in.
+_QUOTE_BUDGET = 4.0
+# Quotes stay subscribed after a call, so asking again for one not yet filled
+# in, or quoting the same legs again, answers at once. IBKR allows a paper
+# account about 100 subscriptions at a time; the oldest go first.
+_MAX_TICKERS = 80
 
 
 class NotReady(Exception):
@@ -118,6 +125,8 @@ class IBKRBroker:
         self._recorded: set[str] = set()  # execution ids already offered to the ledger
         self._place_lock = asyncio.Lock()
         self._quote_lock = asyncio.Lock()
+        self._contracts: dict[str, Contract] = {}  # symbol -> qualified contract
+        self._tickers: OrderedDict[int, Ticker] = OrderedDict()  # contract id -> live quote, oldest first
 
     @property
     def paper(self) -> bool:
@@ -152,6 +161,7 @@ class IBKRBroker:
             self.ib.disconnect()
             raise RuntimeError(f"set IBKR_ACCOUNT to one of {accounts}")
         self.account = account
+        self._tickers.clear()  # a dropped connection takes its subscriptions with it
         self.ib.reqMarketDataType(s.market_data_type)
         # The daily loss limit reads this. Reuse a subscription that survived a
         # dropped connection rather than asking for a second one.
@@ -207,23 +217,28 @@ class IBKRBroker:
 
     async def quotes(self, symbols: list[str]) -> list[models.Quote]:
         self._require_connected()
-        contracts = [_contract_for(s) for s in symbols]
-        await self.ib.qualifyContractsAsync(*contracts)  # sets conId on each one it finds
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _QUOTE_BUDGET
+        contracts = [self._contracts.get(_key(s)) or _contract_for(s) for s in symbols]
+        new = [c for c in contracts if not c.conId]
+        if new:
+            await self.ib.qualifyContractsAsync(*new)  # sets conId on each one it finds
+            self._contracts.update((_key(_symbol_of(c)), c) for c in new if c.conId)
         known = list({c.conId: c for c in contracts if c.conId}.values())
         # Streamed, not a snapshot: IBKR answers a snapshot of delayed option
-        # data with nothing, and sends delayed ticks only to a subscription,
-        # within a few seconds. One caller at a time, since cancelling a
-        # contract's subscription would cut off another caller's.
+        # data with nothing, and sends delayed ticks only to a subscription.
         async with self._quote_lock:
-            tickers = {c.conId: self.ib.reqMktData(c) for c in known}
-            try:
-                loop = asyncio.get_running_loop()
-                deadline = loop.time() + _QUOTE_WAIT
-                while loop.time() < deadline and not all(_quoted(t) for t in tickers.values()):
-                    await asyncio.sleep(0.25)
-            finally:
-                for c in known:
-                    self.ib.cancelMktData(c)
+            for c in known:
+                if c.conId in self._tickers:
+                    self._tickers.move_to_end(c.conId)
+                else:
+                    self._tickers[c.conId] = self.ib.reqMktData(c)
+            while len(self._tickers) > _MAX_TICKERS:  # this call's are newest, so never these
+                _, old = self._tickers.popitem(last=False)
+                self.ib.cancelMktData(old.contract)
+            tickers = {c.conId: self._tickers[c.conId] for c in known}
+            while loop.time() < deadline and not all(_quoted(t) for t in tickers.values()):
+                await asyncio.sleep(0.2)
         out = []
         for c in contracts:
             t = tickers.get(c.conId) if c.conId else None
@@ -788,8 +803,11 @@ def _con_ids(trade: Trade) -> list[int]:
     return [trade.contract.conId]
 
 
-async def _wait_acknowledged(trade: Trade, timeout: float = 5.0) -> None:
-    """Give IBKR a moment to accept or reject the order, so the reply says which."""
+async def _wait_acknowledged(trade: Trade, timeout: float = 3.0) -> None:
+    """Give IBKR a moment to accept or reject the order, so the reply says
+    which. Short: the whole call must answer within Catalyst's 5 seconds
+    (_QUOTE_BUDGET). An order still PendingSubmit after it is placed all the
+    same; get_order shows what became of it."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while trade.orderStatus.status in ("", "PendingSubmit", "ApiPending") and loop.time() < deadline:
@@ -802,6 +820,11 @@ def _action(side: models.Side) -> str:
 
 def _sign(side: models.Side) -> float:
     return 1.0 if side is models.Side.BUY else -1.0
+
+
+def _key(symbol: str) -> str:
+    """A symbol as get_quotes caches it: OCC padded, or the ticker."""
+    return occ.normalize(symbol) if occ.is_option(symbol) else symbol.strip().upper()
 
 
 def _contract_for(symbol: str) -> Contract:
