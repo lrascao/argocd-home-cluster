@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import NamedTuple
 
-from ib_async import IB, ComboLeg, Contract, LimitOrder, Stock, Trade
+from ib_async import IB, ComboLeg, Contract, LimitOrder, Stock, Ticker, Trade
 
 from . import ledger, models, occ, strategies
 from .limits import Exposure, check_opening, check_strategy, conflict, eur_per, is_close, max_loss, positions_risk
@@ -30,6 +30,9 @@ log = logging.getLogger(__name__)
 
 # IBKR reports "no value" as the largest double, and "no quote" as -1.
 _UNSET = 1e300
+# How long get_quotes waits for a quote to fill in. Delayed ticks take a
+# few seconds; a closed market never fills in, and costs the whole wait.
+_QUOTE_WAIT = 6.0
 
 
 class NotReady(Exception):
@@ -114,6 +117,7 @@ class IBKRBroker:
         self._symbols: dict[int, occ.OptionSymbol] = {}  # contract id -> OCC symbol
         self._recorded: set[str] = set()  # execution ids already offered to the ledger
         self._place_lock = asyncio.Lock()
+        self._quote_lock = asyncio.Lock()
 
     @property
     def paper(self) -> bool:
@@ -205,12 +209,25 @@ class IBKRBroker:
         self._require_connected()
         contracts = [_contract_for(s) for s in symbols]
         await self.ib.qualifyContractsAsync(*contracts)  # sets conId on each one it finds
-        known = [c for c in contracts if c.conId]
-        tickers = {t.contract.conId: t for t in await self.ib.reqTickersAsync(*known)} if known else {}
+        known = list({c.conId: c for c in contracts if c.conId}.values())
+        # Streamed, not a snapshot: IBKR answers a snapshot of delayed option
+        # data with nothing, and sends delayed ticks only to a subscription,
+        # within a few seconds. One caller at a time, since cancelling a
+        # contract's subscription would cut off another caller's.
+        async with self._quote_lock:
+            tickers = {c.conId: self.ib.reqMktData(c) for c in known}
+            try:
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + _QUOTE_WAIT
+                while loop.time() < deadline and not all(_quoted(t) for t in tickers.values()):
+                    await asyncio.sleep(0.25)
+            finally:
+                for c in known:
+                    self.ib.cancelMktData(c)
         out = []
         for c in contracts:
             t = tickers.get(c.conId) if c.conId else None
-            if t is None:
+            if t is None or all(_price(p) is None for p in (t.bid, t.ask, t.last, t.close)):
                 error = "no market data" if c.conId else "no such contract"
                 out.append(models.Quote(symbol=_symbol_of(c), error=error))
                 continue
@@ -251,7 +268,11 @@ class IBKRBroker:
         ]
         if not out:
             raise NotFound(f"no options listed on {underlying!r}")
-        return out
+        # Beside the standard class, named after the ticker, IBKR can list
+        # others: 2SPY and B1SPY beside SPY, options adjusted after a
+        # corporate action, with a handful of expirations and strikes. An
+        # agent that reads one of those first picks the wrong expiry.
+        return [c for c in out if c.root == stock.symbol] or out
 
     async def preview(self, view: View, req: models.OrderRequest) -> models.OrderPreview:
         self._require_connected()
@@ -808,6 +829,14 @@ def _num(v: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if math.isnan(f) or abs(f) >= _UNSET else f
+
+
+def _quoted(t: Ticker) -> bool:
+    """Whether a streamed quote has filled in: a bid and an ask, and for an
+    option the model's greeks too."""
+    if _price(t.bid) is None or _price(t.ask) is None:
+        return False
+    return t.contract.secType != "OPT" or (t.modelGreeks is not None and _num(t.modelGreeks.delta) is not None)
 
 
 def _price(v: object) -> float | None:

@@ -1,8 +1,9 @@
 from datetime import date, datetime
+from types import SimpleNamespace
 
-from ib_async import Contract, LimitOrder, OrderStatus, Trade, TradeLogEntry
+from ib_async import Contract, LimitOrder, OrderStatus, Ticker, Trade, TradeLogEntry
 
-from broker_ibkr.ibkr import _parse_ref, build_order, make_ref, order_view
+from broker_ibkr.ibkr import _parse_ref, _quoted, build_order, make_ref, order_view
 from broker_ibkr.models import DESK, OrderRequest, OrderState
 
 SHORT = "SPY   261218P00450000"
@@ -109,3 +110,14 @@ def test_order_view_treats_any_other_status_as_working():
         orderStatus=OrderStatus(status="PreSubmitted"),
     )
     assert order_view(trade).state is OrderState.WORKING
+
+
+def test_a_streamed_quote_has_filled_in_with_a_bid_an_ask_and_for_an_option_a_delta():
+    greeks = SimpleNamespace(delta=-0.22)
+    assert _quoted(Ticker(contract=Contract(secType="STK"), bid=755.46, ask=755.49))
+    assert _quoted(Ticker(contract=Contract(secType="OPT"), bid=5.32, ask=5.35, modelGreeks=greeks))
+    # Delayed option ticks arrive a few seconds apart: wait for the greeks.
+    assert not _quoted(Ticker(contract=Contract(secType="OPT"), bid=5.32, ask=5.35))
+    # IBKR's "no quote" is -1, and nothing yet is NaN.
+    assert not _quoted(Ticker(contract=Contract(secType="OPT"), bid=-1.0, ask=5.35, modelGreeks=greeks))
+    assert not _quoted(Ticker(contract=Contract(secType="STK")))

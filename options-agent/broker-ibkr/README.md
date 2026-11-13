@@ -108,8 +108,8 @@ The desk's token sees every strategy's, and on REST can act as one with
 | `list_strategies` | `GET /v1/strategies` | every strategy, for the desk |
 | `get_account` | `GET /v1/account` | net liquidation, available funds, buying power, in the account's base currency |
 | `get_positions` | `GET /v1/positions` | the caller's positions, by the ledger; the desk's view adds what IBKR holds that no one accounts for |
-| `get_quotes` | `GET /v1/quotes?symbol=…` | 1–50 symbols; bid/ask/last/close, greeks for options |
-| `get_option_chain` | `GET /v1/chains/{underlying}` | per OCC root: expirations and strikes (US stocks and ETFs, not indexes) |
+| `get_quotes` | `GET /v1/quotes?symbol=…` | 1–50 symbols; bid/ask/last/close, greeks for options; streamed for up to 6 seconds, since IBKR sends delayed option data only to a subscription |
+| `get_option_chain` | `GET /v1/chains/{underlying}` | expirations and strikes of the standard OCC root, leaving out adjusted classes such as `2SPY` (US stocks and ETFs, not indexes) |
 | `preview_order` | `POST /v1/orders/preview` | opens or closes, max loss in USD and EUR, margin, commission, and why the limits would refuse it |
 | `place_order` | `POST /v1/orders` | place, or return the order already placed under that `client_order_id` |
 | `list_open_orders` | `GET /v1/orders` | the caller's orders still working |

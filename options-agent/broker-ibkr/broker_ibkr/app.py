@@ -140,9 +140,9 @@ async def get_quotes(symbols: list[str]) -> list[models.Quote]:
 
 @mcp.tool()
 async def get_option_chain(underlying: str) -> list[models.Chain]:
-    """The OCC roots, expirations and strikes listed for a US stock or ETF.
-    Not every strike exists at every expiration: build the symbol, then quote
-    it to confirm. An OCC symbol is the root padded to 6 characters, the
+    """The expirations and strikes listed for a US stock or ETF, under its
+    standard OCC root. Not every strike exists at every expiration: build the
+    symbol, then quote it to confirm. An OCC symbol is the root padded to 6 characters, the
     expiry as YYMMDD, C or P, and the strike times 1000 in 8 digits:
     "SPY   261218P00450000" is the SPY 450 put expiring 2026-12-18."""
     return await broker.chains(underlying)
