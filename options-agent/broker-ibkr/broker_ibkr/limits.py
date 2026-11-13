@@ -184,6 +184,7 @@ def check_strategy(
     blocked: str | None,
     rights: set[str],
     legs: int,
+    limit_price: float,
     expiries: set[date],
     today: date,
     order_loss: float,
@@ -208,6 +209,11 @@ def check_strategy(
         return f"this strategy opens {strategy.legs}-leg orders, not {legs}"
     if not_allowed := rights - set(strategy.rights):
         return f"this strategy opens only {_rights(strategy.rights)}, not {_rights(not_allowed)}"
+    if strategy.min_credit is not None and -limit_price < strategy.min_credit - 1e-9:
+        return (
+            f"its limit_price {limit_price:.2f} is not a credit of at least {strategy.min_credit:.2f}, "
+            "this strategy's minimum"
+        )
     if len(expiries) != 1:
         return "all legs of an opening order must share one expiry"
     dte = (next(iter(expiries)) - today).days

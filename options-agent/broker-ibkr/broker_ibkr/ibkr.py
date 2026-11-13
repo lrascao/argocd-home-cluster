@@ -478,6 +478,7 @@ class IBKRBroker:
                     blocked=rec.blocking(owner),
                     rights={s.right for s in symbols},
                     legs=len(legs),
+                    limit_price=float(req.limit_price),
                     expiries=expiries,
                     today=today,
                     order_loss=loss,

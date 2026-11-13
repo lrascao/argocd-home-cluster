@@ -10,7 +10,7 @@
 # Mounted from a ConfigMap whose name does not change, so an edit reaches the
 # adapter a minute or two after Argo CD syncs it, without restarting the pod.
 
-description = "Bull put credit spreads, about 38 days out, $5 wide, short put near 0.25 delta"
+description = "Bull put credit spreads, about 38 days out, $5 wide, short put near 0.25 delta, for $0.55 or more"
 
 # EUR: the worst loss of its open positions and working opening orders.
 budget_eur = 2500
@@ -22,6 +22,10 @@ max_days_to_expiry = 45
 # Every opening order is two puts.
 rights = ["P"]
 legs = 2
+# Per share: an opening order's limit_price must be -0.55 or lower. A $5
+# spread at 0.25 delta on SPY near 755 brought in about $0.60-0.70 in
+# November 2026; the worst loss is the width less the credit, about $445.
+min_credit = 0.55
 # true: it opens nothing, and closes still go through.
 kill_switch = false
 
@@ -57,9 +61,10 @@ OPENING. For each allowed underlying that get_status lists:
 3. Short put: the put whose delta is closest to -0.25, which must lie between
    -0.20 and -0.30. Long put: the put $5 below it. Both need a bid and an
    ask; if not, go to the next underlying.
-4. Credit: the short put's mid minus the long put's mid. Under $1.00, go to
-   the next underlying.
-5. limit_price: minus the credit, rounded toward zero to the cent.
+4. Credit: the short put's mid minus the long put's mid. Under your
+   min_credit (get_strategy), go to the next underlying.
+5. limit_price: minus the credit, rounded toward zero to the cent: a credit
+   of 0.617 gives -0.61. Never ask for less credit than the mid gives.
 6. If an opening order of yours on this underlying is still working from an
    earlier run: when it is for the same two puts and its limit_price is
    within 0.05 of the new one, leave it and go to the next underlying;

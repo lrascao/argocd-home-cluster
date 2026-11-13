@@ -195,6 +195,7 @@ PUT_SPREAD = Strategy(
     max_days_to_expiry=45,
     rights=["P"],
     legs=2,
+    min_credit=0.55,
 )
 
 
@@ -204,6 +205,7 @@ def check_s(**overrides):
         "blocked": None,
         "rights": {"P"},
         "legs": 2,
+        "limit_price": -0.61,
         "expiries": {EXPIRY},
         "today": TODAY,
         "order_loss": 400.0,
@@ -249,6 +251,8 @@ def test_limits_come_from_the_environment(monkeypatch):
         ({"blocked": "SPY 261218P00450000: IBKR holds 0, the ledger -1"}, "the ledger does not match IBKR"),
         ({"legs": 4}, "2-leg orders, not 4"),
         ({"rights": {"C", "P"}}, "only puts, not calls"),
+        ({"limit_price": -0.23}, "-0.23 is not a credit of at least 0.55"),
+        ({"limit_price": 1.10}, "1.10 is not a credit of at least 0.55"),
         ({"expiries": {EXPIRY, date(2027, 1, 15)}}, "share one expiry"),
         ({"expiries": {date(2026, 12, 4)}}, "outside this strategy's 30-45"),
         ({"order_loss": math.inf}, "unlimited"),
@@ -291,3 +295,8 @@ def test_the_desk_holds_contracts_like_a_strategy():
 def test_a_position_nobody_accounts_for_stops_strategies_but_not_the_desk():
     assert "must be attributed first" in limits.conflict("put-spread", CONTRACTS, {}, {}, {SHORT: -1.0})
     assert limits.conflict(DESK, CONTRACTS, {}, {}, {SHORT: -1.0}) is None
+
+
+def test_a_credit_of_exactly_the_minimum_passes_and_a_debit_strategy_has_none():
+    assert check_s(limit_price=-0.55) is None
+    assert check_s(strategy=PUT_SPREAD.model_copy(update={"min_credit": None}), limit_price=1.10) is None

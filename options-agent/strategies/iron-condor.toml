@@ -10,7 +10,7 @@
 # Mounted from a ConfigMap whose name does not change, so an edit reaches the
 # adapter a minute or two after Argo CD syncs it, without restarting the pod.
 
-description = "Iron condors, about 38 days out, $5 wings, short strikes near 0.16 delta"
+description = "Iron condors, about 38 days out, $5 wings, short strikes near 0.16 delta, for $0.50 or more"
 
 # EUR: the worst loss of its open positions and working opening orders.
 budget_eur = 2500
@@ -22,6 +22,10 @@ max_days_to_expiry = 45
 # Every opening order is two puts and two calls.
 rights = ["C", "P"]
 legs = 4
+# Per share: an opening order's limit_price must be -0.50 or lower. $5 wings
+# at 0.16 delta bring in less than a put spread nearer the money; the worst
+# loss is one wing's width less the credit, about $450.
+min_credit = 0.50
 # true: it opens nothing, and closes still go through.
 kill_switch = false
 
@@ -64,8 +68,9 @@ OPENING. For each allowed underlying that get_status lists:
    the call $5 above it. All four need a bid and an ask; if not, go to the
    next underlying.
 4. Credit: the two short legs' mids minus the two long legs' mids. Under
-   $0.80, go to the next underlying.
-5. limit_price: minus the credit, rounded toward zero to the cent.
+   your min_credit (get_strategy), go to the next underlying.
+5. limit_price: minus the credit, rounded toward zero to the cent: a credit
+   of 0.617 gives -0.61. Never ask for less credit than the mids give.
 6. If an opening order of yours on this underlying is still working from an
    earlier run: when it is for the same four options and its limit_price is
    within 0.05 of the new one, leave it and go to the next underlying;

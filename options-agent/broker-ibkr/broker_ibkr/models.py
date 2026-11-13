@@ -186,6 +186,10 @@ class Strategy(BaseModel):
     max_days_to_expiry: int = Field(ge=0)
     rights: list[Literal["C", "P"]] = Field(min_length=1)  # what its opening orders may hold
     legs: int = Field(ge=1, le=4)  # how many legs each opening order has
+    # The least net credit per share an opening order may ask: its
+    # limit_price must be this or more negative. None for a strategy that
+    # opens for a debit.
+    min_credit: float | None = Field(default=None, gt=0)
     kill_switch: bool = False
 
     @model_validator(mode="after")

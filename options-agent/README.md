@@ -23,7 +23,7 @@ Two strategies to start with, to prove the mechanism more than to make money:
 |---|---|---|
 | Opens | a bull put spread, $5 wide, short put near 0.25 delta | an iron condor, $5 wings, short strikes near 0.16 delta |
 | Expiry | about 38 days out (30-45) | about 38 days out (30-45) |
-| Only if | the credit is at least $1.00 | the credit is at least $0.80 |
+| Only for | a credit of at least $0.55, a hard limit | a credit of at least $0.50, a hard limit |
 | Closes | at 50% of the credit, at a loss of 2x the credit, or at 21 days | the same |
 | Budget | €2,500 at risk, €500 per order, 6 opening orders a day | the same |
 | Runs | :00 and :30, 10:00-15:30 New York | :15 and :45, 10:15-15:45 New York |
