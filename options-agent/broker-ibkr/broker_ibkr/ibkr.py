@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import NamedTuple
 
-from ib_async import IB, ComboLeg, Contract, LimitOrder, Stock, Trade
+from ib_async import IB, ComboLeg, Contract, Forex, LimitOrder, Stock, Ticker, Trade
 
 from . import ledger, models, occ, strategies
 from .limits import Exposure, check_opening, check_strategy, conflict, eur_per, is_close, max_loss, positions_risk
@@ -111,6 +111,7 @@ class IBKRBroker:
         self.ib = IB()
         self.account = ""
         self._pnl = None  # IBKR's live P&L for the account, once subscribed
+        self._fx: Ticker | None = None  # EUR.USD on IBKR's forex market, once subscribed
         self._symbols: dict[int, occ.OptionSymbol] = {}  # contract id -> OCC symbol
         self._recorded: set[str] = set()  # execution ids already offered to the ledger
         self._place_lock = asyncio.Lock()
@@ -153,6 +154,13 @@ class IBKRBroker:
         # dropped connection rather than asking for a second one.
         existing = self.ib.pnl(account)
         self._pnl = existing[0] if existing else self.ib.reqPnL(account)
+        # The euro limits need EUR/USD. IBKR's account values give it only for
+        # currencies the account holds, and a euro account holds no dollars
+        # until its first option trade, so quote it too. A dropped connection
+        # takes market data subscriptions with it: ask again on every connect.
+        fx = Forex("EURUSD")
+        await self.ib.qualifyContractsAsync(fx)
+        self._fx = self.ib.reqMktData(fx)
         log.info("connected: account=%s paper=%s orders_enabled=%s", account, self.paper, self.orders_enabled)
 
     def _require_connected(self) -> None:
@@ -659,7 +667,16 @@ class IBKRBroker:
                 rates[v.currency] = r
         if base := self._base_currency():
             rates[base] = 1.0
-        return eur_per(rates, currency)
+        return eur_per(rates, currency, self._eurusd())
+
+    def _eurusd(self) -> float | None:
+        """Dollars per euro, the mid of IBKR's EUR.USD quote, else its close."""
+        if self._fx is None:
+            return None
+        for price in (self._fx.midpoint(), self._fx.close):
+            if (p := _num(price)) is not None and p > 0:
+                return p
+        return None
 
     def _daily_pnl_eur(self) -> float | None:
         """IBKR's P&L for the day, which is in the account's base currency."""

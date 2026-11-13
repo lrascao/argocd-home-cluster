@@ -150,8 +150,10 @@ of legs an opening order has, and its own kill switch.
   always allowed, kill switches included. Anything else opens risk and must
   pass every limit.
 - **Euros.** Money limits are in euros. A loss is worked out in dollars from
-  the legs and converted at IBKR's own rate, its `ExchangeRate` account
-  values; until IBKR has sent them, nothing opens.
+  the legs and converted at IBKR's own rate: its `ExchangeRate` account
+  values, which it sends only for currencies the account holds, and until
+  the account holds dollars, its EUR.USD quote on IDEALPRO. With neither,
+  nothing opens.
 - **One owner per contract.** An opening order is refused on a contract
   another strategy holds or has an order working on, and, for a strategy, on
   one where IBKR holds a position no one in the ledger accounts for.

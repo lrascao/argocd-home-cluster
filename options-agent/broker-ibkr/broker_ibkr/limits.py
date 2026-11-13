@@ -9,7 +9,7 @@ is always allowed, kill switch included.
 Two layers: the account's limits (limits.env), on every strategy's orders
 together, and each strategy's own (strategies/<id>.toml). Money limits are in
 euros. A loss is worked out in dollars from the legs and converted at IBKR's
-own EUR/USD rate; until IBKR has sent it, nothing opens.
+own EUR/USD rate (eur_per); without one, nothing opens.
 """
 
 import logging
@@ -91,12 +91,19 @@ def positions_risk(positions: Iterable[tuple[occ.OptionSymbol, float, float]]) -
     return sum(max_loss(legs[k], cash[k]) for k in legs)
 
 
-def eur_per(rates: dict[str, float], currency: str) -> float | None:
-    """Euros per unit of currency, from IBKR's ExchangeRate account values,
-    which give each currency in the account's base currency (the base itself
-    at 1). None until IBKR has sent both."""
+def eur_per(rates: dict[str, float], currency: str, eurusd: float | None = None) -> float | None:
+    """Euros per unit of currency. First from IBKR's ExchangeRate account
+    values, which give each currency in the account's base currency (the base
+    itself at 1), but only for currencies the account holds. Failing that, for
+    dollars, from eurusd, the market's dollars per euro. None if neither."""
+    if currency == "EUR":
+        return 1.0
     unit, eur = rates.get(currency), rates.get("EUR")
-    return unit / eur if unit and eur else None
+    if unit and eur:
+        return unit / eur
+    if currency == "USD" and eurusd:
+        return 1 / eurusd
+    return None
 
 
 def is_close(legs: list[tuple[int, models.Side, float]], held: dict[int, float], working: set[int]) -> bool:
