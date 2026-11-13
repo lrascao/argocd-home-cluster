@@ -65,9 +65,8 @@ Settings come from the environment:
 | `IBKR_ACCOUNT` | the only one | needed only if the login manages several accounts |
 | `IBKR_MARKET_DATA_TYPE` | `3` | `1` live, `3` delayed |
 | `IBKR_ALLOW_LIVE` | unset | `true` lets it place orders on a non-paper account |
-| `BROKER_TOKEN` | unset | the desk's (admin's) token; when set, every call but `/healthz` needs `Authorization: Bearer <token>` or a strategy's |
-| `STRATEGY_TOKENS` | unset | `<id>=<token>,...`: each strategy's token |
-| `CALLER_TOKEN_ISSUER` | unset | the Sentry issuer of the token the MCPServer's sidecar sends ([callers.py](broker_ibkr/callers.py)); with it, the `dapr-caller-app-id` header says which agent is calling; unset, only the tokens above count |
+| `BROKER_TOKEN` | unset | the desk's (admin's) token, for calls by hand; when set, every call but `/healthz` needs `Authorization: Bearer <token>` or the MCPServer's |
+| `CALLER_TOKEN_ISSUER` | unset | the Sentry issuer of the token the MCPServer's sidecar sends ([callers.py](broker_ibkr/callers.py)); with it, the `dapr-caller-app-id` header says which agent is calling; unset, only `BROKER_TOKEN` counts |
 | `CALLER_TOKEN_AUDIENCE` | unset | the audience that token must name: the MCPServer's `--spiffe-jwt-audience` |
 | `CALLER_TRUST_DOMAIN` / `CALLER_NAMESPACE` | unset | the project's SPIFFE trust domain and namespace |
 | `MCPSERVER_APP_ID` | `broker` | the MCPServer's App ID: a token for any other app is refused |
@@ -77,9 +76,9 @@ Settings come from the environment:
 | `LEDGER_PATH` | `ledger.db` | the SQLite ledger |
 | `LIMIT_*` | unset | the account's hard limits, described in [../limits.env](../limits.env); until all are set, nothing opens |
 
-To try it as a strategy on a laptop, leave `BROKER_TOKEN` unset (every other
-call is then the desk), set `STRATEGIES_DIR=../strategies` and
-`STRATEGY_TOKENS=put-spread=test`, and send `Authorization: Bearer test`.
+On a laptop, leave `BROKER_TOKEN` unset: every call is then the desk. Set
+`STRATEGIES_DIR=../strategies` and add `?strategy=put-spread` to a REST call
+to make it as that strategy.
 
 ## Dependencies
 
@@ -104,8 +103,7 @@ The MCP server is at `/mcp`; each tool is also a REST call under `/v1`.
 
 The token says who is calling ([strategies.py](broker_ibkr/strategies.py)):
 with the token the region's Sentry signs for the MCPServer, the calling
-agent's App ID ([callers.py](broker_ibkr/callers.py)), or a strategy's own
-token. A strategy
+agent's App ID ([callers.py](broker_ibkr/callers.py)). A strategy
 sees and trades only its own orders and positions. The desk, its agent or the
 admin token, sees every strategy's, and on REST can act as one with
 `?strategy=<id>`, or as itself with `?strategy=desk`.

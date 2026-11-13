@@ -117,29 +117,20 @@ spec:
         # with paper; then 1.
         - name: IBKR_MARKET_DATA_TYPE
           value: "3"
-        # The desk's bearer token: the admin, who sees every strategy. Without
-        # it, or a strategy's, every call but /healthz gets 401.
+        # The desk's bearer token, for calls by hand: the admin, who sees
+        # every strategy. The agents need none (broker_ibkr/callers.py).
         - name: BROKER_TOKEN
           valueFrom:
             secretKeyRef:
               name: options-agent
               key: BROKER_TOKEN
-        # Each strategy's token, "put-spread=<token>,iron-condor=<token>",
-        # from when each strategy had an MCPServer of its own sending it.
-        # None does now (README.md, "Who is calling"). Optional.
-        - name: STRATEGY_TOKENS
-          valueFrom:
-            secretKeyRef:
-              name: options-agent
-              key: STRATEGY_TOKENS
-              optional: true
         # One MCPServer for every agent (broker_ibkr/callers.py): a call that
         # carries the token the region's Sentry signs for MCPServer broker's
         # App ID, created with --spiffe-jwt-header, is from the agent its
         # dapr-caller-app-id header names: options-<id> is strategy <id>,
         # DESK_APP_ID is the desk. These are identifiers, not secrets: the
         # tokens are checked against the keys the issuer publishes. Without
-        # CALLER_TOKEN_ISSUER only the bearer tokens above count.
+        # CALLER_TOKEN_ISSUER only BROKER_TOKEN counts.
         - name: CALLER_TOKEN_ISSUER
           value: https://oidc.r1.diagrid.io/d117358594104023e2135a829599fb74ef8a0c626e8e6de58155af47f82f54ac
         # What the MCPServer's --spiffe-jwt-audience says.

@@ -1,14 +1,14 @@
 """The broker adapter's two faces, over the same IBKRBroker.
 
-- /mcp: the MCP server the Catalyst managed agents use, each through its own
-  MCPServer resource and access grant.
+- /mcp: the MCP server the Catalyst managed agents use, all through
+  MCPServer broker, each with its own access grant.
 - /v1: the same calls as plain REST, for people and scripts (curl, the first
   paper session in README.md).
 
 Every call but /healthz needs a bearer token, and the token says who is
 calling (strategies.py): the calling agent's App ID, with the token the
-region's Sentry signs for the MCPServer it came through (callers.py), or a
-strategy's own token (STRATEGY_TOKENS), is that strategy, which sees and trades only its own orders and positions; the desk's
+region's Sentry signs for the MCPServer it came through (callers.py), is that
+strategy, which sees and trades only its own orders and positions; the desk's
 agent and the admin token (BROKER_TOKEN) are the desk, which sees everything
 and, on REST, can act as a strategy with ?strategy=<id>. Everything is async
 on purpose: ib_async is not thread-safe, and FastAPI runs plain `def` routes
@@ -286,7 +286,7 @@ def _caller(
     if strategy == who:
         return View(who)
     if who != DESK:
-        raise Forbidden("a strategy's token acts only as that strategy")
+        raise Forbidden("a strategy acts only as itself")
     if strategy != DESK and not strategies.valid_id(strategy):
         raise Refused(f"{strategy!r} is not a strategy id")
     return View(strategy)

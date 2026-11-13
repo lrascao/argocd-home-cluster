@@ -272,10 +272,6 @@ refuses, with the token's subject or the caller it named:
 kubectl -n options-agent logs deploy/broker-ibkr -c broker | grep -E 'calls as|refused'
 ```
 
-Until 13 November 2026 each strategy had an MCPServer of its own, sending a
-token of its own; the adapter still accepts such tokens (`STRATEGY_TOKENS`),
-but no MCPServer sends them.
-
 ## When the ledger and IBKR disagree
 
 The ledger only sees fills of the adapter's own orders, so it can fall out of

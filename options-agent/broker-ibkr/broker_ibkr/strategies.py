@@ -1,16 +1,14 @@
 """Who is calling, and what each strategy may do.
 
 Several strategies trade the same account side by side, each run by its own
-agent, and the token a call carries says which strategy it is from:
+agent. Who a call is from:
 
-- through one MCPServer for every agent, the calling agent's App ID, which
-  counts with the token the region's Sentry signs for that MCPServer
-  (callers.py): options-<id> is strategy <id>, and options-trader is the
-  desk;
-- a strategy's static bearer token (STRATEGY_TOKENS), sent by an MCPServer of
-  that strategy's own;
-- the admin token (BROKER_TOKEN), the desk, which people and scripts use on
-  REST.
+- through MCPServer broker, which every agent uses, the calling agent's App
+  ID, which counts with the token the region's Sentry signs for that
+  MCPServer (callers.py): options-<id> is strategy <id>, and options-trader
+  is the desk;
+- with the admin token (BROKER_TOKEN), the desk, which people and scripts
+  use on REST.
 
 The desk sees every strategy's orders and positions, and on REST can act as
 any of them.
@@ -47,54 +45,15 @@ def exists(directory: str, sid: str) -> bool:
     return valid_id(sid) and bool(directory) and (Path(directory) / f"{sid}.toml").is_file()
 
 
-def parse_tokens(value: str) -> dict[str, str]:
-    """STRATEGY_TOKENS, "put-spread=<token>,iron-condor=<token>", as token ->
-    strategy id. Raises ValueError, never quoting a token, if it is malformed."""
-    out: dict[str, str] = {}
-    for n, item in enumerate((i.strip() for i in value.split(",")), 1):
-        if not item:
-            continue
-        sid, sep, token = (s.strip() for s in item.partition("="))
-        # Never quote the entry: without its "=", or with the two swapped,
-        # what would be quoted is the token.
-        if not sep:
-            raise ValueError(f"STRATEGY_TOKENS entry {n} has no '=': it should be <strategy id>=<token>")
-        if not valid_id(sid):
-            raise ValueError(
-                f"STRATEGY_TOKENS entry {n} does not start with a strategy id "
-                "(lowercase letters, digits and dashes, not 'desk')"
-            )
-        if not token:
-            raise ValueError(f"STRATEGY_TOKENS entry {n}, {sid}, has an empty token")
-        if token in out:
-            raise ValueError(f"STRATEGY_TOKENS gives {out[token]} and {sid} the same token")
-        out[token] = sid
-    return out
-
-
 class Auth:
-    def __init__(
-        self, admin_token: str, strategy_tokens: dict[str, str], caller_tokens: callers.Callers | None = None
-    ) -> None:
-        self._admin = admin_token
-        self._tokens = [(t.encode(), sid) for t, sid in strategy_tokens.items()]
-        if admin_token:
-            self._tokens.append((admin_token.encode(), DESK))
+    def __init__(self, admin_token: str, caller_tokens: callers.Callers | None = None) -> None:
+        self._admin = admin_token.encode()
         self._callers = caller_tokens
 
     @classmethod
     def from_env(cls) -> "Auth":
-        """The tokens from the environment. A malformed STRATEGY_TOKENS turns
-        every strategy's token off, not the adapter: the desk keeps working."""
-        try:
-            tokens = parse_tokens(os.getenv("STRATEGY_TOKENS", ""))
-        except ValueError as e:
-            log.error("%s; no strategy's own token works until it is fixed", e)
-            tokens = {}
         directory = os.getenv("STRATEGIES_DIR", "")
-        return cls(
-            os.getenv("BROKER_TOKEN", ""), tokens, callers.Callers.from_env(lambda sid: exists(directory, sid))
-        )
+        return cls(os.getenv("BROKER_TOKEN", ""), callers.Callers.from_env(lambda sid: exists(directory, sid)))
 
     async def warm(self) -> None:
         """Fetch the keys Sentry's tokens are checked with, before the first
@@ -113,18 +72,17 @@ class Auth:
     def identify(self, authorization: str, caller: str = "") -> str | None:
         """Who is calling, by the Authorization header and, with a Sentry
         token, the dapr-caller-app-id header: a strategy's id, DESK for the
-        desk's agent or the admin token, or None for neither. With no admin
-        token set (a laptop), anything else is the desk."""
+        desk's agent or the admin token, MCPSERVER_CHECK for the MCPServer's
+        own check, or None for none of them. With no admin token set (a
+        laptop), anything else is the desk."""
         bearer = _bearer(authorization)
         if bearer is not None:
             if self._callers is not None and callers.looks_like_one(bearer):
                 who = self._callers.identify(bearer, caller)
                 if who is not None:
                     return who
-            given = bearer.encode()
-            for token, who in self._tokens:
-                if hmac.compare_digest(given, token):
-                    return who
+            if self._admin and hmac.compare_digest(bearer.encode(), self._admin):
+                return DESK
         return None if self._admin else DESK
 
 

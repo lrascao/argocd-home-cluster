@@ -207,18 +207,16 @@ def test_a_discovery_document_for_another_issuer_gives_no_keys():
 # --- with the static tokens ----------------------------------------------------
 
 
-def test_sentry_tokens_and_static_tokens_both_count():
-    auth = strategies.Auth("admin", {"aaa": "iron-condor"}, _callers(Issuer(PUBLIC)))
+def test_sentry_tokens_and_the_admin_token_both_count():
+    auth = strategies.Auth("admin", _callers(Issuer(PUBLIC)))
     token = _token()
     for header, caller, who in [
         (f"Bearer {token}", "options-put-spread", "put-spread"),
         (f"Bearer {token}", "options-trader", DESK),
         (f"Bearer {token}", "whatsapp-agent", None),
         (f"Bearer {token}", "", callers.MCPSERVER_CHECK),
-        ("Bearer aaa", "", "iron-condor"),
         ("Bearer admin", "", DESK),
         # Without the MCPServer's token the caller header counts for nothing.
-        ("Bearer aaa", "options-put-spread", "iron-condor"),
         ("Bearer admin", "options-put-spread", DESK),
         ("Bearer nope", "options-put-spread", None),
         (token, "options-put-spread", None),  # no "Bearer "

@@ -21,43 +21,22 @@ legs = 2
 """
 
 
-# --- tokens -----------------------------------------------------------------
+# --- the admin token ---------------------------------------------------------
 
 
-def test_tokens_map_to_their_strategies():
-    assert strategies.parse_tokens(" put-spread=aaa , iron-condor=bbb,") == {"aaa": "put-spread", "bbb": "iron-condor"}
-    assert strategies.parse_tokens("") == {}
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "s3cret",  # no id
-        "put-spread=",  # no token
-        "Put_Spread=s3cret",  # not an id
-        "desk=s3cret",  # the desk is not a strategy
-        "put-spread=s3cret,iron-condor=s3cret",  # one token, two strategies
-    ],
-)
-def test_malformed_tokens_are_refused_without_quoting_them(value):
-    with pytest.raises(ValueError) as e:
-        strategies.parse_tokens(value)
-    assert "s3cret" not in str(e.value)
-
-
-def test_the_token_says_who_is_calling():
-    auth = strategies.Auth("admin", {"aaa": "put-spread"})
+def test_the_admin_token_is_the_desk():
+    auth = strategies.Auth("admin")
     assert auth.identify("Bearer admin") == DESK
-    assert auth.identify("Bearer aaa") == "put-spread"
+    assert auth.identify("Bearer admin", "options-put-spread") == DESK  # the header counts for nothing here
     assert auth.identify("Bearer nope") is None
-    assert auth.identify("aaa") is None
+    assert auth.identify("admin") is None
     assert auth.identify("") is None
 
 
-def test_without_an_admin_token_anyone_else_is_the_desk():
-    # A laptop: no BROKER_TOKEN, as before there were strategies.
-    auth = strategies.Auth("", {"aaa": "put-spread"})
-    assert auth.identify("Bearer aaa") == "put-spread"
+def test_without_an_admin_token_anyone_is_the_desk():
+    # A laptop: no BROKER_TOKEN.
+    auth = strategies.Auth("")
+    assert auth.identify("Bearer anything") == DESK
     assert auth.identify("") == DESK
 
 
@@ -103,12 +82,3 @@ def test_a_file_that_does_not_load_says_why_and_the_others_still_do(tmp_path, na
 def test_no_directory_means_no_strategies(tmp_path):
     assert strategies.load("") == ({}, {})
     assert strategies.load(str(tmp_path / "missing")) == ({}, {})
-
-
-def test_a_malformed_strategy_tokens_turns_off_the_strategies_not_the_desk(monkeypatch):
-    # Both tokens empty: the shell that sealed them never had them set.
-    monkeypatch.setenv("BROKER_TOKEN", "admin")
-    monkeypatch.setenv("STRATEGY_TOKENS", "put-spread=,iron-condor=")
-    auth = strategies.Auth.from_env()
-    assert auth.identify("Bearer admin") == DESK
-    assert auth.identify("Bearer ") is None
