@@ -142,7 +142,10 @@ Two layers. The account's ([../limits.env](../limits.env)) apply to every
 opening order, the desk's included. A strategy's own (its file in
 [../strategies](../strategies)) apply to its orders on top: its budget, max
 loss per order, opening orders per day, days to expiry, the rights and number
-of legs an opening order has, and its own kill switch.
+of legs an opening order has, the least credit it may ask (`min_credit`),
+how far under its legs' current mids it may price (`max_credit_below_mid`,
+checked against the broker's own quotes, so every leg must be quoted first),
+and its own kill switch.
 
 - **Opening or closing.** An order is a close when every leg trades against a
   position at least its size, both the caller's by the ledger and the

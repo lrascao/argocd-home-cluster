@@ -196,6 +196,7 @@ PUT_SPREAD = Strategy(
     rights=["P"],
     legs=2,
     min_credit=0.55,
+    max_credit_below_mid=0.20,
 )
 
 
@@ -206,6 +207,7 @@ def check_s(**overrides):
         "rights": {"P"},
         "legs": 2,
         "limit_price": -0.61,
+        "mid_credit": 0.62,
         "expiries": {EXPIRY},
         "today": TODAY,
         "order_loss": 400.0,
@@ -253,6 +255,9 @@ def test_limits_come_from_the_environment(monkeypatch):
         ({"rights": {"C", "P"}}, "only puts, not calls"),
         ({"limit_price": -0.23}, "-0.23 is not a credit of at least 0.55"),
         ({"limit_price": 1.10}, "1.10 is not a credit of at least 0.55"),
+        ({"mid_credit": None}, "quote every leg with get_quotes first"),
+        # The iron condor of 2026-11-13: mids gave 1.21, it asked 0.57.
+        ({"limit_price": -0.57, "mid_credit": 1.21}, "asks a credit of 0.57, under the 0.97 this strategy allows"),
         ({"expiries": {EXPIRY, date(2027, 1, 15)}}, "share one expiry"),
         ({"expiries": {date(2026, 12, 4)}}, "outside this strategy's 30-45"),
         ({"order_loss": math.inf}, "unlimited"),
@@ -299,4 +304,13 @@ def test_a_position_nobody_accounts_for_stops_strategies_but_not_the_desk():
 
 def test_a_credit_of_exactly_the_minimum_passes_and_a_debit_strategy_has_none():
     assert check_s(limit_price=-0.55) is None
-    assert check_s(strategy=PUT_SPREAD.model_copy(update={"min_credit": None}), limit_price=1.10) is None
+    # A debit whose mids cost 1.00 may pay up to 1.20.
+    debit = PUT_SPREAD.model_copy(update={"min_credit": None})
+    assert check_s(strategy=debit, limit_price=1.10, mid_credit=-1.00) is None
+    assert "asks a credit of -1.25" in check_s(strategy=debit, limit_price=1.25, mid_credit=-1.00)
+
+
+def test_asking_more_than_the_mid_or_a_little_less_passes():
+    assert check_s(limit_price=-0.70, mid_credit=0.62) is None
+    assert check_s(limit_price=-0.56, mid_credit=0.70) is None  # 0.56 is exactly 80% of 0.70
+    assert check_s(strategy=PUT_SPREAD.model_copy(update={"max_credit_below_mid": None}), mid_credit=None) is None

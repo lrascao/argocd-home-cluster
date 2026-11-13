@@ -190,6 +190,11 @@ class Strategy(BaseModel):
     # limit_price must be this or more negative. None for a strategy that
     # opens for a debit.
     min_credit: float | None = Field(default=None, gt=0)
+    # How much less credit than its legs' current mids an opening order may
+    # ask, as a share: 0.20 lets a spread whose mids give 1.00 ask 0.80 or
+    # more. None for no check. The mids are the broker's own live quotes, so
+    # every leg must have been quoted first.
+    max_credit_below_mid: float | None = Field(default=None, ge=0, lt=1)
     kill_switch: bool = False
 
     @model_validator(mode="after")

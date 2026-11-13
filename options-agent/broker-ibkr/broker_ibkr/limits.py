@@ -185,6 +185,7 @@ def check_strategy(
     rights: set[str],
     legs: int,
     limit_price: float,
+    mid_credit: float | None,
     expiries: set[date],
     today: date,
     order_loss: float,
@@ -195,7 +196,9 @@ def check_strategy(
     """Why a strategy's own limits refuse an order that opens risk, or None.
 
     error is why its file did not load; blocked is why the ledger and IBKR
-    disagree in a way that stops it (ledger.Reconciliation.blocking). order_loss and open_risk are in dollars,
+    disagree in a way that stops it (ledger.Reconciliation.blocking).
+    mid_credit is the credit per unit the legs' current mids give, None if a
+    leg has no live quote. order_loss and open_risk are in dollars,
     open_risk being the strategy's own positions and working opening orders;
     opened_today counts its own opening orders today.
     """
@@ -214,6 +217,17 @@ def check_strategy(
             f"its limit_price {limit_price:.2f} is not a credit of at least {strategy.min_credit:.2f}, "
             "this strategy's minimum"
         )
+    if strategy.max_credit_below_mid is not None:
+        if mid_credit is None:
+            return "quote every leg with get_quotes first: the broker checks the price against their mids"
+        # A share of the mid's size either way: a debit (negative credit)
+        # may pay that much more than the mid, a credit receive that much less.
+        floor = mid_credit - abs(mid_credit) * strategy.max_credit_below_mid
+        if -limit_price < floor - 1e-9:
+            return (
+                f"it asks a credit of {-limit_price:.2f}, under the {floor:.2f} this strategy allows: "
+                f"its legs' mids give {mid_credit:.2f} now; price it from the mids"
+            )
     if len(expiries) != 1:
         return "all legs of an opening order must share one expiry"
     dte = (next(iter(expiries)) - today).days

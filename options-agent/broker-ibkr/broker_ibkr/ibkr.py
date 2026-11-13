@@ -277,6 +277,14 @@ class IBKRBroker:
             )
         return out
 
+    def _mid(self, con_id: int) -> float | None:
+        """A contract's mid from its live quote, if get_quotes subscribed it."""
+        sub = self._tickers.get(con_id)
+        if sub is None:
+            return None
+        bid, ask = _price(sub[0].bid), _price(sub[0].ask)
+        return (bid + ask) / 2 if bid is not None and ask is not None else None
+
     def _evict(self) -> None:
         """Cancel the oldest subscriptions past _MAX_TICKERS, never one a
         get_quotes call is still waiting on."""
@@ -508,6 +516,12 @@ class IBKRBroker:
                 contracts = {c.conId: str(s) for c, s in zip(legs, symbols)}
                 refused = conflict(owner, contracts, holders, busy, rec.unattributed)
             if refused is None and owner != DESK:
+                mids = [self._mid(c.conId) for c in legs]
+                mid_credit = (
+                    None
+                    if any(m is None for m in mids)
+                    else sum((m if leg.side is models.Side.SELL else -m) * leg.ratio for leg, m in zip(req.legs, mids))
+                )
                 loaded, errors = strategies.load(self.strategies_dir)
                 refused = check_strategy(
                     loaded.get(owner),
@@ -516,6 +530,7 @@ class IBKRBroker:
                     rights={s.right for s in symbols},
                     legs=len(legs),
                     limit_price=float(req.limit_price),
+                    mid_credit=mid_credit,
                     expiries=expiries,
                     today=today,
                     order_loss=loss,

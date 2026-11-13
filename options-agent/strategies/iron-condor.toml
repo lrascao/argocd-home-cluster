@@ -26,6 +26,11 @@ legs = 4
 # at 0.16 delta bring in less than a put spread nearer the money; the worst
 # loss is one wing's width less the credit, about $450.
 min_credit = 0.50
+# At most 20% less credit than the legs' current mids give: with mids at
+# 1.00, -0.80 or lower. The broker reads the mids from the quotes the agent
+# took, so every leg must be quoted first. On 2026-11-13 the agents asked
+# 0.23 on mids of 0.62 and 0.57 on mids of 1.21.
+max_credit_below_mid = 0.20
 # true: it opens nothing, and closes still go through.
 kill_switch = false
 
