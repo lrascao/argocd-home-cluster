@@ -1,0 +1,23 @@
+# The adapter's ledger: which strategy holds what. IBKR keeps one set of
+# positions for the account and knows nothing of strategies, so this is the
+# only record of whose position is whose (broker-ibkr/broker_ibkr/ledger.py).
+#
+# A SQLite file, so ReadWriteOnce, a block device: SQLite's locking is not
+# safe on the NFS share Longhorn serves ReadWriteMany volumes through. The
+# Deployment's one replica and Recreate strategy mean one writer at a time.
+# A few hundred bytes per fill; 256Mi is room for years of them. Losing it
+# loses the attribution, not the positions: every strategy is then blocked
+# from opening, and closes still go through, until the positions are
+# attributed again by hand (README.md, "When the ledger and IBKR disagree").
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: broker-ledger
+  namespace: options-agent
+spec:
+  storageClassName: longhorn
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 256Mi

@@ -1,0 +1,72 @@
+# The put-spread strategy: bull put credit spreads on the account's allowed
+# underlyings (limits.env, LIMIT_UNDERLYINGS). Run by the agent in
+# catalyst/options-put-spread.yaml, which reads this file through get_strategy
+# at the start of every run; the file name is the strategy's id.
+#
+# The numbers are hard limits on this strategy's own orders that open risk,
+# which the adapter enforces inside the account's (limits.env). The rules are
+# what the agent is asked to do, and hold only as far as the numbers do.
+#
+# Mounted from a ConfigMap whose name does not change, so an edit reaches the
+# adapter a minute or two after Argo CD syncs it, without restarting the pod.
+
+description = "Bull put credit spreads, about 38 days out, $5 wide, short put near 0.25 delta"
+
+# EUR: the worst loss of its open positions and working opening orders.
+budget_eur = 2500
+max_loss_per_order_eur = 500
+# Per UTC day, counting refused and cancelled ones.
+max_opening_orders_per_day = 6
+min_days_to_expiry = 30
+max_days_to_expiry = 45
+# Every opening order is two puts.
+rights = ["P"]
+legs = 2
+# true: it opens nothing, and closes still go through.
+kill_switch = false
+
+rules = '''
+You sell bull put credit spreads: sell a put and buy the put $5 below it, same
+expiry, one contract, for a credit. Prices are per share. A leg's mid is
+(bid + ask) / 2 from quotes you took in this run.
+
+Manage what you hold first, then open.
+
+MANAGING. A short put and a long put of the same underlying and expiry in
+get_positions are one spread. For each spread:
+1. Credit received: the short put's avg_price minus the long put's avg_price.
+2. Cost to close: the short put's mid minus the long put's mid.
+3. Close it if any of these holds:
+   - the cost to close is at most half the credit received (take the profit);
+   - the cost to close is at least three times the credit received (the loss
+     has reached twice the credit);
+   - 21 days or fewer are left to its expiry.
+4. To close: one order with the same two puts the other way round (buy the
+   short put, sell the long put), quantity as held, limit_price the cost to
+   close rounded up to the cent, never below 0.01, positive (you pay).
+5. If a closing order of yours for it is still working from an earlier run,
+   cancel it first, then place the new one under a new id.
+
+OPENING. For each allowed underlying that get_status lists:
+1. Expiry: from get_option_chain, the expiration closest to 38 days away
+   within your min_days_to_expiry and max_days_to_expiry. If you already hold
+   a spread at that expiry on this underlying, go to the next underlying.
+2. Quote the underlying. Build the put symbols for every listed strike from
+   about 3% to 12% below its price, at most 40, and quote them. If the quotes
+   carry no delta, open nothing and report it.
+3. Short put: the put whose delta is closest to -0.25, which must lie between
+   -0.20 and -0.30. Long put: the put $5 below it. Both need a bid and an
+   ask; if not, go to the next underlying.
+4. Credit: the short put's mid minus the long put's mid. Under $1.00, go to
+   the next underlying.
+5. limit_price: minus the credit, rounded toward zero to the cent.
+6. If an opening order of yours on this underlying is still working from an
+   earlier run: when it is for the same two puts and its limit_price is
+   within 0.05 of the new one, leave it and go to the next underlying;
+   otherwise cancel it and go on.
+7. preview_order, quantity 1. If it is refused because another strategy
+   holds or has an order working on one of the puts, move both strikes $1
+   lower and preview once more. If it is refused for any other reason, or
+   again, report why and go to the next underlying. Otherwise place_order
+   with the same arguments.
+'''

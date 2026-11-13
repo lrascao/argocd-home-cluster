@@ -21,6 +21,12 @@ spec:
         app: broker-ibkr
     spec:
       enableServiceLinks: false
+      # The ledger's volume is root's when Longhorn makes it; this lets the
+      # adapter (uid 65532) write it. The Gateway's container gets the group
+      # too, and mounts nothing of the adapter's.
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
       containers:
       # IB Gateway under IBC, from our own image
       # (ansible-local-network/services/ib-gateway): IBKR's installer and an
@@ -96,7 +102,10 @@ spec:
         - -c
         - |
           set -e
-          uv venv --quiet /tmp/venv
+          # --clear: /tmp outlives a container restart, and without it the
+          # restart fails on the venv the last start left behind, hiding why
+          # that one crashed.
+          uv venv --quiet --clear /tmp/venv
           uv pip install --quiet --python /tmp/venv --require-hashes --no-deps -r /app/broker_ibkr/requirements.lock
           exec /tmp/venv/bin/uvicorn broker_ibkr.app:app --app-dir /app --host 0.0.0.0 --port 8080 --loop asyncio
         env:
@@ -108,13 +117,27 @@ spec:
         # with paper; then 1.
         - name: IBKR_MARKET_DATA_TYPE
           value: "3"
-        # The bearer token the MCPServer sends. Without it every call but
-        # /healthz gets 401.
+        # The desk's bearer token: the admin, who sees every strategy. Without
+        # it, or a strategy's, every call but /healthz gets 401.
         - name: BROKER_TOKEN
           valueFrom:
             secretKeyRef:
               name: options-agent
               key: BROKER_TOKEN
+        # Each strategy's token, "put-spread=<token>,iron-condor=<token>":
+        # the token its MCPServer sends is how the adapter knows which
+        # strategy is calling. Optional, so the pod starts before the key is
+        # in the sealed secret; until then only the desk's token works.
+        - name: STRATEGY_TOKENS
+          valueFrom:
+            secretKeyRef:
+              name: options-agent
+              key: STRATEGY_TOKENS
+              optional: true
+        - name: STRATEGIES_DIR
+          value: /strategies
+        - name: LEDGER_PATH
+          value: /data/ledger.db
         - name: UV_CACHE_DIR
           value: /cache
         - name: UV_PYTHON_DOWNLOADS
@@ -168,6 +191,11 @@ spec:
         - name: src
           mountPath: /app/broker_ibkr
           readOnly: true
+        - name: strategies
+          mountPath: /strategies
+          readOnly: true
+        - name: ledger
+          mountPath: /data
         - name: uv-cache
           mountPath: /cache
         - name: tmp
@@ -176,6 +204,13 @@ spec:
       - name: src
         configMap:
           name: broker-ibkr-src
+      - name: strategies
+        configMap:
+          name: options-agent-strategies
+      # Which strategy holds what (broker-ibkr/broker_ibkr/ledger.py).
+      - name: ledger
+        persistentVolumeClaim:
+          claimName: broker-ledger
       - name: uv-cache
         emptyDir: {}
       - name: tmp

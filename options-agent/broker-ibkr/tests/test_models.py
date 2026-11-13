@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from broker_ibkr.models import OrderRequest
+from broker_ibkr.models import Adjustment, OrderRequest
 
 SHORT_PUT = {"symbol": "SPY261218P00450000", "side": "sell"}
 LONG_PUT = {"symbol": "SPY261218P00440000", "side": "buy"}
@@ -40,3 +40,18 @@ def test_a_single_buy_pays_and_a_single_sell_receives():
 def test_rejects(overrides):
     with pytest.raises(ValidationError):
         OrderRequest.model_validate(request(**overrides))
+
+
+def test_an_adjustment_names_an_option_and_an_owner():
+    adj = Adjustment.model_validate({"strategy": "desk", "symbol": "SPY261218P00450000", "quantity": -1, "price": 0})
+    assert (adj.strategy, adj.symbol) == ("desk", "SPY   261218P00450000")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"quantity": 0}, {"price": -1}, {"symbol": "SPY"}, {"strategy": "Put Spread"}],
+)
+def test_adjustment_rejects(overrides):
+    adj = {"strategy": "put-spread", "symbol": "SPY261218P00450000", "quantity": 1, "price": 1.5} | overrides
+    with pytest.raises(ValidationError):
+        Adjustment.model_validate(adj)

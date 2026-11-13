@@ -1,0 +1,38 @@
+# The clock for options-put-spread: a cron input binding scoped to the agent's
+# App ID (its name), which POSTs to the agent's own /v1/runs on every tick. A
+# DurableAgent never wakes by itself; this is what makes it trade on a
+# schedule. Each tick is a run in a new thread with the message "Carry out
+# your instructions.", so the agent's instructions decide the work.
+#
+# Needs the controlplane change that adds POST /v1/runs and accepts cron
+# bindings; until it is released this will not apply, and the agent runs only
+# by hand (options-agent/README.md). Applied to Catalyst, not synced by ArgoCD,
+# and only once the limits are set: every tick is an LLM bill.
+#
+#   diagrid apply --project test -f catalyst/options-put-spread-schedule.yaml
+#
+# Nothing stops two runs overlapping, as a CronJob's concurrencyPolicy would.
+# Runs take minutes and ticks are 30 minutes apart; if one ever runs long, the
+# broker's hard limits are the backstop against both acting on the same thing.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: options-put-spread-schedule
+spec:
+  type: bindings.cron
+  version: v1
+  metadata:
+  # 10:00 to 15:30 New York time on weekdays; the first field is seconds.
+  # New York, not Lisbon, so the US and European daylight-saving switches,
+  # weeks apart, do not move it against the market. Market holidays still
+  # tick; the agent finds the market closed and reports that.
+  - name: schedule
+    value: "CRON_TZ=America/New_York 0 0,30 10-15 * * 1-5"
+  # Catalyst requires it on an input binding. It also skips Dapr's startup
+  # probe of the route.
+  - name: direction
+    value: input
+  - name: route
+    value: /v1/runs
+scopes:
+- options-put-spread

@@ -1,14 +1,18 @@
-# Kustomize, unlike the plain-manifest apps in this repo, so code and limits
-# are not copied into hand-kept ConfigMaps: the generators below read the real
-# files, and each ConfigMap's name carries a hash of its contents, so changing
-# the adapter or limits.env rolls the pod. A new module under
-# broker-ibkr/broker_ibkr/ must be added to `files`. No `namespace:` field,
-# which would also rename the Namespace object; every manifest names its own.
+# Kustomize, unlike the plain-manifest apps in this repo, so code, limits and
+# strategies are not copied into hand-kept ConfigMaps: the generators below
+# read the real files. The code's and the limits' ConfigMap names carry a hash
+# of their contents, so changing the adapter or limits.env rolls the pod. The
+# strategies' does not, so an edited strategy reaches the running adapter
+# without a restart. A new module under broker-ibkr/broker_ibkr/, or a new
+# strategy under strategies/, must be added to its `files`. No `namespace:`
+# field, which would also rename the Namespace object; every manifest names
+# its own.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - namespace.yaml
 - sealed-secret.yaml
+- pvc.yaml
 - deployment.yaml
 - service.yaml
 configMapGenerator:
@@ -18,9 +22,11 @@ configMapGenerator:
   - broker-ibkr/broker_ibkr/__init__.py
   - broker-ibkr/broker_ibkr/app.py
   - broker-ibkr/broker_ibkr/ibkr.py
+  - broker-ibkr/broker_ibkr/ledger.py
   - broker-ibkr/broker_ibkr/limits.py
   - broker-ibkr/broker_ibkr/models.py
   - broker-ibkr/broker_ibkr/occ.py
+  - broker-ibkr/broker_ibkr/strategies.py
   # Generated from requirements.txt with hashes; Kustomize refuses to build
   # until it exists (broker-ibkr/README.md, "Dependencies").
   - broker-ibkr/requirements.lock
@@ -28,3 +34,12 @@ configMapGenerator:
   namespace: options-agent
   envs:
   - limits.env
+# One file per strategy; the file name is its id. Mounted as a directory, not
+# with subPath, so the kubelet swaps in an edited file in place.
+- name: options-agent-strategies
+  namespace: options-agent
+  options:
+    disableNameSuffixHash: true
+  files:
+  - strategies/put-spread.toml
+  - strategies/iron-condor.toml
