@@ -1,5 +1,5 @@
 # The iron-condor strategy's agent. It trades on the IBKR paper account through
-# MCPServer broker-iron-condor, which sends the iron-condor strategy's token, so the
+# MCPServer broker, which tells the broker its App ID, options-iron-condor, so the
 # broker shows it only its own orders and positions and holds it to the
 # limits in options-agent/strategies/iron-condor.toml. Its rules live in that file
 # too, and reach it through get_strategy; these instructions are only the run

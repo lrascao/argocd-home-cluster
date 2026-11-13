@@ -1,5 +1,5 @@
 # The put-spread strategy's agent. It trades on the IBKR paper account through
-# MCPServer broker-put-spread, which sends the put-spread strategy's token, so the
+# MCPServer broker, which tells the broker its App ID, options-put-spread, so the
 # broker shows it only its own orders and positions and holds it to the
 # limits in options-agent/strategies/put-spread.toml. Its rules live in that file
 # too, and reach it through get_strategy; these instructions are only the run

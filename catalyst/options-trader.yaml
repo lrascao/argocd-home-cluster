@@ -1,8 +1,9 @@
 # The options desk: answers questions about the strategies trading the IBKR
 # paper account, for whatsapp-agent, which calls it as a teammate. It does not
-# trade. Each strategy is an agent of its own (options-<id>.yaml) with its own
-# MCPServer; this one uses MCPServer broker, which sends the desk's token, so
-# the broker shows it every strategy's orders and positions. It is granted
+# trade. Each strategy is an agent of its own (options-<id>.yaml); all of them
+# and this one use MCPServer broker, which tells the broker the caller's App
+# ID. This one's, options-trader, is the desk, so the broker shows it every
+# strategy's orders and positions. It is granted
 # only the broker's read tools, so it could not trade if it tried. Applied to
 # Catalyst, not synced by ArgoCD:
 #

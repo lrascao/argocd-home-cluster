@@ -8,13 +8,14 @@ trade the same underlyings.
 ```
 cron binding        every 30 min, US session                  ../catalyst/options-<id>-schedule.yaml
   -> POST /v1/runs  a run of options-<id>, in a new thread     ../catalyst/options-<id>.yaml
-     -> MCPServer   broker-<id>, sending <id>'s token
+     -> MCPServer   broker: <id>'s grant, Sentry's token,
+                    and the caller's App ID, options-<id>
         -> broker   the adapter: who is calling, the ledger,   broker-ibkr/
                     the account's and <id>'s hard limits       limits.env, strategies/<id>.toml
            -> IB Gateway, same pod -> IBKR paper account      deployment.yaml
 
 whatsapp-agent -> options-trader, the desk: read-only, sees every strategy
-                    -> MCPServer broker, sending the admin token
+                    -> MCPServer broker, the same one, as options-trader
 ```
 
 Two strategies to start with, to prove the mechanism more than to make money:
@@ -49,13 +50,11 @@ Until it is, everything else here works and the agents run only by hand.
 IBKR keeps one set of positions for the account and knows nothing of
 strategies, so the adapter keeps that apart itself:
 
-- **The token says who is calling.** Each strategy's MCPServer sends that
-  strategy's token, or one MCPServer serves every agent and the adapter
-  takes the calling agent's App ID; see
-  [One MCPServer for every agent](#one-mcpserver-for-every-agent). The
-  adapter shows a strategy only its own orders and positions, and checks its
-  orders against its own limits as well as the account's. The desk sees
-  everything.
+- **The adapter knows which agent is calling.** One MCPServer serves every
+  agent, and passes on which one is calling; see
+  [Who is calling](#who-is-calling). The adapter shows a strategy only its
+  own orders and positions, and checks its orders against its own limits as
+  well as the account's. The desk sees everything.
 - **Every order carries its strategy**, in its IBKR `orderRef`, so who placed
   what survives a restart.
 - **A ledger records whose fills are whose** (SQLite, on the volume in
@@ -112,8 +111,8 @@ Both are what stands between the IBKR login and code nobody here has read.
 
 ### 3. The sealed secret
 
-Four values: the **paper** username and password, a bearer token for the
-desk (the admin), and the strategies' tokens. Use the paper account's own
+Three values: the **paper** username and password, and a bearer token for
+calls by hand (the admin, which is the desk). Use the paper account's own
 username, never your live one: IBKR also accepts the live login in paper mode,
 and that would put your real login in the cluster. From the repo root, on a
 machine that reaches the cluster:
@@ -125,22 +124,9 @@ BROKER_TOKEN=$(openssl rand -hex 32)
 kubectl create secret generic options-agent --namespace options-agent --dry-run=client -o yaml --from-literal=TWS_USERID="$TWS_USERID" --from-literal=TWS_PASSWORD="$TWS_PASSWORD" --from-literal=BROKER_TOKEN="$BROKER_TOKEN" | kubeseal --controller-namespace kube-system --controller-name sealed-secrets-controller --format yaml > options-agent/sealed-secret.yaml
 ```
 
-Keep `BROKER_TOKEN` in vaultwarden (step 6 needs it), then
-`unset TWS_USERID TWS_PASSWORD BROKER_TOKEN`.
-
-`STRATEGY_TOKENS` holds one token per strategy,
-`<id>=<token>,<id>=<token>`. Add it to the sealed secret without retyping
-the rest: `--merge-into` replaces only the keys given. Every strategy's token
-goes in at once, since the key is replaced whole:
-
-```bash
-PUT_SPREAD_TOKEN=$(openssl rand -hex 32)
-IRON_CONDOR_TOKEN=$(openssl rand -hex 32)
-kubectl create secret generic options-agent --namespace options-agent --dry-run=client -o yaml --from-literal=STRATEGY_TOKENS="put-spread=$PUT_SPREAD_TOKEN,iron-condor=$IRON_CONDOR_TOKEN" | kubeseal --controller-namespace kube-system --controller-name sealed-secrets-controller --format yaml --merge-into options-agent/sealed-secret.yaml
-```
-
-Keep both tokens in vaultwarden (step 6 needs them too). Until the key is in
-the secret, only the desk's token works and no strategy can call the broker.
+Keep `BROKER_TOKEN` in vaultwarden, then
+`unset TWS_USERID TWS_PASSWORD BROKER_TOKEN`. The agents need no token of
+their own: see [Who is calling](#who-is-calling).
 
 ### 4. The limits
 
@@ -180,32 +166,37 @@ kubectl -n options-agent logs deploy/broker-ibkr -c broker -f
 
 ### 6. The MCP servers, the agents and the grants
 
-One MCPServer per strategy, each sending that strategy's token, and one for
-the desk, sending the admin token. Every agent's App ID must also be in the
-scopes of the `llm-openai` component, which runs gpt-5.4: on gpt-5.4-mini the
-strategy agents picked wrong expiries and strikes and skipped steps.
+One MCPServer, `broker`, for every agent, sending the token the region's
+Sentry signs for its App ID; see [Who is calling](#who-is-calling). The CLI
+sets that only on `mcpserver create`. Every agent's App ID must also be in
+the scopes of the `llm-openai` component, which runs gpt-5.4: on gpt-5.4-mini
+the strategy agents picked wrong expiries and strikes and skipped steps.
 
 ```bash
-read -rs BROKER_TOKEN
-read -rs PUT_SPREAD_TOKEN
-read -rs IRON_CONDOR_TOKEN
-diagrid mcpserver create broker --project test --url http://broker.options-agent.svc.cluster.local:8080/mcp --header Authorization:"Bearer $BROKER_TOKEN" --description "IBKR paper options broker, the desk's view of every strategy" --wait
-diagrid mcpserver create broker-put-spread --project test --url http://broker.options-agent.svc.cluster.local:8080/mcp --header Authorization:"Bearer $PUT_SPREAD_TOKEN" --description "IBKR paper options broker, as the put-spread strategy" --wait
-diagrid mcpserver create broker-iron-condor --project test --url http://broker.options-agent.svc.cluster.local:8080/mcp --header Authorization:"Bearer $IRON_CONDOR_TOKEN" --description "IBKR paper options broker, as the iron-condor strategy" --wait
-unset BROKER_TOKEN PUT_SPREAD_TOKEN IRON_CONDOR_TOKEN
+diagrid mcpserver create broker --project test --url http://broker.options-agent.svc.cluster.local:8080/mcp --timeout 30s --spiffe-jwt-header Authorization --spiffe-jwt-prefix "Bearer " --spiffe-jwt-audience broker.options-agent.svc.cluster.local --description "IBKR paper options broker; each agent calls as itself" --wait
 diagrid mcpserver tools list broker --project test
 diagrid apply --project test -f catalyst/options-trader.yaml
 diagrid apply --project test -f catalyst/options-put-spread.yaml
 diagrid apply --project test -f catalyst/options-iron-condor.yaml
 diagrid mcpserver access grant broker --project test --caller options-trader --allow-tools get_status,list_strategies,get_account,get_positions,get_quotes,get_option_chain,get_order,list_open_orders
-diagrid mcpserver access grant broker-put-spread --project test --caller options-put-spread --allow-tools get_status,get_strategy,get_account,get_positions,get_quotes,get_option_chain,preview_order,place_order,get_order,list_open_orders,cancel_order
-diagrid mcpserver access grant broker-iron-condor --project test --caller options-iron-condor --allow-tools get_status,get_strategy,get_account,get_positions,get_quotes,get_option_chain,preview_order,place_order,get_order,list_open_orders,cancel_order
+diagrid mcpserver access grant broker --project test --caller options-put-spread --allow-tools get_status,get_strategy,get_account,get_positions,get_quotes,get_option_chain,preview_order,place_order,get_order,list_open_orders,cancel_order
+diagrid mcpserver access grant broker --project test --caller options-iron-condor --allow-tools get_status,get_strategy,get_account,get_positions,get_quotes,get_option_chain,preview_order,place_order,get_order,list_open_orders,cancel_order
+kubectl -n prj-14384718 delete pod -l 'cra.diagrid.io/app-id in (options-trader,options-put-spread,options-iron-condor)'
 ```
 
-The grants name every tool instead of `'*'`, so a tool added to the adapter
-later is not granted by default. The desk gets only the read tools: it could
-not trade if it tried. Each strategy's agent is granted only its own
-MCPServer, so it can only ever be that strategy.
+The last line is for the re-attach bug in
+[Restarting the broker](#restarting-the-broker): a grant on `broker`
+changes what every agent on it has attached. The grants name every tool
+instead of `'*'`, so a tool added to the adapter later is not granted by
+default. The desk gets only the read tools: it could not trade if it tried.
+A strategy's agent can only be that strategy, since the adapter takes its
+App ID from Dapr, not from anything the agent says.
+
+To check who each agent is, ask it; `get_status` names the caller:
+
+```bash
+diagrid managed-agent chat -m "Call get_status and tell me who it says the caller is. Do nothing else." --agent options-put-spread --project test
+```
 
 ### 7. One run of each by hand
 
@@ -246,21 +237,21 @@ one runs past the next tick; the hard limits are the backstop.
    `options-agent-strategies` generator in
    [kustomization.yaml](kustomization.yaml), and make room for its budget and
    daily orders in [limits.env](limits.env).
-2. Merge a token for it into the sealed secret as in step 3. `STRATEGY_TOKENS`
-   is replaced whole, so give every strategy's token again.
-3. Copy `catalyst/options-put-spread.yaml` and its schedule to
+2. Copy `catalyst/options-put-spread.yaml` and its schedule to
    `options-<id>.yaml` and `options-<id>-schedule.yaml`, replacing the id.
-   Stagger the schedule's minutes against the others.
-4. Commit and push; the pod rolls for the new token.
-5. Add `options-<id>` to the `llm-openai` component's scopes, then create its
-   MCPServer, apply its agent and grant it, as in step 6.
+   Stagger the schedule's minutes against the others. The agent must be
+   called `options-<id>`: that App ID is how the adapter knows it is the
+   strategy.
+3. Commit and push.
+4. Add `options-<id>` to the `llm-openai` component's scopes, apply its
+   agent, grant it on `broker` with the strategy tools of step 6, and delete
+   every agent pod on `broker`, as there.
 
-## One MCPServer for every agent
+## Who is calling
 
-An MCPServer sends the same headers whichever agent calls through it, so with
-bearer tokens each strategy needs an MCPServer of its own, and a token sealed
-for it. But an agent's call reaches the adapter through the sidecar of the
-MCPServer's own App ID, which checks the agent's grant and passes on the
+An MCPServer sends the same headers whichever agent calls through it. But an
+agent's call reaches the adapter through the sidecar of the MCPServer's own
+App ID, which checks the agent's grant and passes on the
 `dapr-caller-app-id` header Dapr sets to the calling agent's App ID, from its
 mTLS identity. Created with `--spiffe-jwt-header`, the MCPServer also sends a
 token the region's Sentry signs for that App ID, `broker`: it names the
@@ -272,40 +263,18 @@ and `options-<id>` for strategy `<id>`, if `strategies/<id>.toml` exists.
 Without that token the header counts for nothing. With the token and no
 header, the call is the MCPServer's own check, which lists the tools before
 the MCPServer turns ready: it gets the MCP handshake and the tool list, and
-no tool. Its settings are in
-[deployment.yaml](deployment.yaml); both kinds of token count side by side,
-so the agents move over one at a time.
+no tool. Its settings are in [deployment.yaml](deployment.yaml).
 
-The CLI sets Sentry tokens only on `mcpserver create`, so `broker` is made
-again. The desk goes first: it only reads, so if something is off, nothing
-can trade wrong.
+The broker logs each agent the first time it calls, and every call it
+refuses, with the token's subject or the caller it named:
 
 ```bash
-diagrid mcpserver delete broker --project test
-diagrid mcpserver create broker --project test --url http://broker.options-agent.svc.cluster.local:8080/mcp --timeout 30s --spiffe-jwt-header Authorization --spiffe-jwt-prefix "Bearer " --spiffe-jwt-audience broker.options-agent.svc.cluster.local --description "IBKR paper options broker; each agent calls as itself" --wait
-diagrid mcpserver access grant broker --project test --caller options-trader --allow-tools get_status,list_strategies,get_account,get_positions,get_quotes,get_option_chain,get_order,list_open_orders
-kubectl -n prj-14384718 delete pod -l cra.diagrid.io/app-id=options-trader
-diagrid managed-agent chat -m "Call get_status and tell me who it says the caller is." --agent options-trader --project test
 kubectl -n options-agent logs deploy/broker-ibkr -c broker | grep -E 'calls as|refused'
 ```
 
-The agent should say the caller is `desk`, and the log should have
-`options-trader calls as desk, through spiffe://.../broker`. A `refused` line
-says why it was not, with the token's subject or the caller it named.
-
-Then each strategy, which starts every run by checking that `get_status`
-names it as the caller:
-
-```bash
-diagrid mcpserver access grant broker --project test --caller options-put-spread --allow-tools get_status,get_strategy,get_account,get_positions,get_quotes,get_option_chain,preview_order,place_order,get_order,list_open_orders,cancel_order
-diagrid mcpserver delete broker-put-spread --project test
-kubectl -n prj-14384718 delete pod -l cra.diagrid.io/app-id=options-put-spread
-diagrid managed-agent chat -m "Carry out your instructions." --agent options-put-spread --project test
-```
-
-and the same for `iron-condor`. Once no MCPServer sends them,
-`STRATEGY_TOKENS` can go from the sealed secret; `BROKER_TOKEN` stays, for
-calls by hand.
+Until 13 November 2026 each strategy had an MCPServer of its own, sending a
+token of its own; the adapter still accepts such tokens (`STRATEGY_TOKENS`),
+but no MCPServer sends them.
 
 ## When the ledger and IBKR disagree
 
@@ -339,8 +308,9 @@ Until the Catalyst fix for re-attaching MCP servers ships, every restart of
 the broker pod leaves each agent holding dead tools: each call fails with
 `ClosedResourceError`, which the agents report as the broker being
 unavailable. A change to the adapter's code, `limits.env` or the sealed secret
-restarts the pod; a change to a strategy file does not. After a restart,
-restart every agent that uses the broker: delete the pod of its sidecar
+restarts the pod; a change to a strategy file does not. A grant on `broker`
+does the same to every agent on it. After either, restart every agent that
+uses the broker: delete the pod of its sidecar
 Deployment, `sidecar-test-<...>` in namespace `prj-14384718`.
 
 ## Stopping it
@@ -366,7 +336,8 @@ of your own.
 ## What is exposed
 
 Only the adapter, through Service `broker`, and every call but `/healthz`
-needs a bearer token, which only the MCPServers hold.
+needs a token: the one Sentry signs for MCPServer `broker`, which only its
+sidecar gets, or the admin token, which only you hold.
 
 IB Gateway's API is not exposed. It has no authentication and bypasses the
 adapter's limits, so it answers on the pod's loopback only; IBC refuses any

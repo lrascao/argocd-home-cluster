@@ -124,10 +124,9 @@ spec:
             secretKeyRef:
               name: options-agent
               key: BROKER_TOKEN
-        # Each strategy's token, "put-spread=<token>,iron-condor=<token>":
-        # the token its MCPServer sends is how the adapter knows which
-        # strategy is calling. Optional, so the pod starts before the key is
-        # in the sealed secret; until then only the desk's token works.
+        # Each strategy's token, "put-spread=<token>,iron-condor=<token>",
+        # from when each strategy had an MCPServer of its own sending it.
+        # None does now (README.md, "Who is calling"). Optional.
         - name: STRATEGY_TOKENS
           valueFrom:
             secretKeyRef:
