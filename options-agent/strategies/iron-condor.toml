@@ -58,10 +58,11 @@ OPENING. For each allowed underlying that get_status lists:
 1. Expiry: from get_option_chain, the expiration closest to 38 days away
    within your min_days_to_expiry and max_days_to_expiry. If you already hold
    a condor at that expiry on this underlying, go to the next underlying.
-2. Quote the underlying. Build the symbols for the puts at every listed
-   strike from about 4% to 12% below its price and the calls from about 2% to
-   8% above it, at most 50 in all, and quote them. If the quotes carry no
-   delta, open nothing and report it.
+2. Quote the underlying for its price; a stock or ETF quote has no delta,
+   which is normal. Build the symbols for the puts at every listed strike
+   from about 4% to 12% below its price and the calls from about 2% to 8%
+   above it, at most 50 in all, and quote them. If those option quotes carry
+   no delta, open nothing and report it.
 3. Short put: the put whose delta is closest to -0.16, which must lie between
    -0.12 and -0.20; long put: the put $5 below it. Short call: the call whose
    delta is closest to 0.16, which must lie between 0.12 and 0.20; long call:

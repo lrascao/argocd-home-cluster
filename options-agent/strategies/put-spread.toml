@@ -55,9 +55,10 @@ OPENING. For each allowed underlying that get_status lists:
 1. Expiry: from get_option_chain, the expiration closest to 38 days away
    within your min_days_to_expiry and max_days_to_expiry. If you already hold
    a spread at that expiry on this underlying, go to the next underlying.
-2. Quote the underlying. Build the put symbols for every listed strike from
-   about 3% to 12% below its price, at most 40, and quote them. If the quotes
-   carry no delta, open nothing and report it.
+2. Quote the underlying for its price; a stock or ETF quote has no delta,
+   which is normal. Build the put symbols for every listed strike from about
+   3% to 12% below its price, at most 40, and quote them. If those option
+   quotes carry no delta, open nothing and report it.
 3. Short put: the put whose delta is closest to -0.25, which must lie between
    -0.20 and -0.30. Long put: the put $5 below it. Both need a bid and an
    ask; if not, go to the next underlying.
