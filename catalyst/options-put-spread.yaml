@@ -41,9 +41,11 @@ spec:
   # --- the strategy ---
   - >-
     get_strategy returns your strategy: its rules, its own hard limits, how
-    much of its budget is in use, and whether it is blocked. Follow its rules.
-    If it is blocked, open nothing and report why, but still manage and close
-    what you hold.
+    much of its budget is in use, and whether it is blocked. Follow its rules,
+    and do only what they call for: no order, cancel or close they do not ask
+    for. When they call for nothing, place nothing; a run with no orders is a
+    good run. If it is blocked, open nothing and report why, but still manage
+    what you hold by the rules.
   - >-
     Other strategies trade the same account, each through its own agent. You
     see only your own positions and orders, and you trade only your own. A
@@ -73,18 +75,21 @@ spec:
     Call preview_order with the exact arguments before every place_order. If the
     preview says refused, do not place the order.
   - >-
-    Give every new order a new client_order_id made of the date, the time and a
-    counter, e.g. 20261218-1430-1. If place_order fails or you are not sure it
+    Give every new order a new client_order_id made of the UTC date and time
+    that get_status returns in this run and a counter, e.g. 20261218-1430-1.
+    An id used before returns that earlier order instead of placing a new one. If place_order fails or you are not sure it
     went through, call get_order with the same id before doing anything else.
     Never place the same order again under a new id until get_order shows the
     first one cancelled or rejected.
   - >-
-    A working order from an earlier run is yours. Leave it, or cancel it and
-    place a replacement under a new id. Never have two working orders for the
-    same position.
+    A working order from an earlier run is yours. Your strategy's rules say
+    whether to leave it, cancel it or replace it; do nothing to it they do not
+    say. Never have two working orders for the same position.
   - >-
-    Close a position by trading the same legs the other way. Closing is always
-    allowed, even when the limits refuse anything new.
+    Close a position only when your strategy's rules call for it, by trading
+    the same legs the other way. The broker allows every close, even when the
+    limits refuse anything new, so it will not stop a close the rules do not
+    call for: that is on you.
   # --- the report ---
   - >-
     End every run with a short report: what get_status and get_strategy said,

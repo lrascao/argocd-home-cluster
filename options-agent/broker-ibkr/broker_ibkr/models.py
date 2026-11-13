@@ -5,7 +5,7 @@ means writing another adapter that serves the same models under the same
 App ID, not changing the agent.
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Literal
@@ -168,6 +168,7 @@ class Health(BaseModel):
     paper: bool | None
     orders_enabled: bool
     caller: str  # who the token says is asking: a strategy's id, or "desk"
+    time: datetime  # now, UTC: the agents have no clock of their own
     eur_per_usd: float | None  # IBKR's rate; until it is known, nothing opens
     limits: Limits | None  # None: not configured, so nothing opens
 

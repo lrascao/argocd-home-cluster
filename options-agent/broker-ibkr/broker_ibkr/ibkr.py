@@ -183,6 +183,7 @@ class IBKRBroker:
             paper=self.paper if self.account else None,
             orders_enabled=self.orders_enabled,
             caller=caller,
+            time=datetime.now(timezone.utc).replace(microsecond=0),
             eur_per_usd=self._eur_per("USD") if connected and self.account else None,
             limits=self.limits,
         )

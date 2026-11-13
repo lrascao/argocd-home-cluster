@@ -81,8 +81,8 @@ mcp = FastMCP(
 @mcp.tool()
 async def get_status(ctx: Context) -> models.Health:
     """Whether the broker is connected to IBKR, whether the account is paper,
-    whether orders are enabled, which strategy you are (caller), IBKR's
-    EUR/USD rate, and the account's hard limits on orders that open risk,
+    whether orders are enabled, which strategy you are (caller), the time
+    now in UTC, IBKR's EUR/USD rate, and the account's hard limits on orders that open risk,
     every strategy's together. Call this first in every run."""
     v = _view(ctx)
     return broker.health(v.owner)
