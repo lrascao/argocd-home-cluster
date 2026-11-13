@@ -133,9 +133,9 @@ async def get_quotes(symbols: list[str]) -> list[models.Quote]:
     stock tickers or OCC option symbols. Quotes are delayed. A symbol that
     does not exist comes back with error "no such contract". The answer comes
     within a few seconds with what has arrived by then: an option quoted for
-    the first time can come back without its delta, and asking for it again
-    a few seconds later fills it in. Never trade a symbol you have not
-    quoted."""
+    the first time can come back without its delta, or with error "no quote
+    yet", and asking for it again a few seconds later fills it in. Never
+    trade a symbol you have not quoted."""
     if not 1 <= len(symbols) <= 50:
         raise Refused("ask for between 1 and 50 symbols")
     return await broker.quotes(symbols)

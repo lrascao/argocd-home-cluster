@@ -179,7 +179,8 @@ kubectl -n options-agent logs deploy/broker-ibkr -c broker -f
 
 One MCPServer per strategy, each sending that strategy's token, and one for
 the desk, sending the admin token. Every agent's App ID must also be in the
-scopes of the `llm-openai` component.
+scopes of the `llm-openai` component, which runs gpt-5.4: on gpt-5.4-mini the
+strategy agents picked wrong expiries and strikes and skipped steps.
 
 ```bash
 read -rs BROKER_TOKEN

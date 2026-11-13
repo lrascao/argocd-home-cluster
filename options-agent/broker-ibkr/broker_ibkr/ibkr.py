@@ -15,7 +15,7 @@ import logging
 import math
 import os
 import uuid
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import NamedTuple
@@ -124,9 +124,11 @@ class IBKRBroker:
         self._symbols: dict[int, occ.OptionSymbol] = {}  # contract id -> OCC symbol
         self._recorded: set[str] = set()  # execution ids already offered to the ledger
         self._place_lock = asyncio.Lock()
-        self._quote_lock = asyncio.Lock()
         self._contracts: dict[str, Contract] = {}  # symbol -> qualified contract
-        self._tickers: OrderedDict[int, Ticker] = OrderedDict()  # contract id -> live quote, oldest first
+        # contract id -> (live quote, when it was subscribed), oldest first
+        self._tickers: OrderedDict[int, tuple[Ticker, float]] = OrderedDict()
+        # contract id -> how many get_quotes calls are waiting on it: never evicted
+        self._pinned: Counter[int] = Counter()
 
     @property
     def paper(self) -> bool:
@@ -227,23 +229,35 @@ class IBKRBroker:
         known = list({c.conId: c for c in contracts if c.conId}.values())
         # Streamed, not a snapshot: IBKR answers a snapshot of delayed option
         # data with nothing, and sends delayed ticks only to a subscription.
-        async with self._quote_lock:
-            for c in known:
-                if c.conId in self._tickers:
-                    self._tickers.move_to_end(c.conId)
-                else:
-                    self._tickers[c.conId] = self.ib.reqMktData(c)
-            while len(self._tickers) > _MAX_TICKERS:  # this call's are newest, so never these
-                _, old = self._tickers.popitem(last=False)
-                self.ib.cancelMktData(old.contract)
-            tickers = {c.conId: self._tickers[c.conId] for c in known}
-            while loop.time() < deadline and not all(_quoted(t) for t in tickers.values()):
+        # No lock: an agent asks for puts and calls at once, and each call
+        # needs its own few seconds, not to queue behind the other's.
+        for c in known:
+            if c.conId in self._tickers:
+                self._tickers.move_to_end(c.conId)
+            else:
+                self._tickers[c.conId] = (self.ib.reqMktData(c), loop.time())
+            self._pinned[c.conId] += 1
+        try:
+            self._evict()
+            subs = {c.conId: self._tickers[c.conId] for c in known}
+            while loop.time() < deadline and not all(_quoted(t) for t, _ in subs.values()):
                 await asyncio.sleep(0.2)
+        finally:
+            for c in known:
+                if (n := self._pinned[c.conId] - 1) > 0:
+                    self._pinned[c.conId] = n
+                else:
+                    self._pinned.pop(c.conId, None)
         out = []
         for c in contracts:
-            t = tickers.get(c.conId) if c.conId else None
+            t, since = subs.get(c.conId, (None, 0.0)) if c.conId else (None, 0.0)
             if t is None or all(_price(p) is None for p in (t.bid, t.ask, t.last, t.close)):
-                error = "no market data" if c.conId else "no such contract"
+                if not c.conId:
+                    error = "no such contract"
+                elif loop.time() - since < 15:
+                    error = "no quote yet: ask for it again in a few seconds"
+                else:
+                    error = "no market data"
                 out.append(models.Quote(symbol=_symbol_of(c), error=error))
                 continue
             g = t.modelGreeks
@@ -262,6 +276,14 @@ class IBKRBroker:
                 )
             )
         return out
+
+    def _evict(self) -> None:
+        """Cancel the oldest subscriptions past _MAX_TICKERS, never one a
+        get_quotes call is still waiting on."""
+        excess = len(self._tickers) - _MAX_TICKERS
+        for con_id in [k for k in self._tickers if k not in self._pinned][: max(excess, 0)]:
+            t, _ = self._tickers.pop(con_id)
+            self.ib.cancelMktData(t.contract)
 
     async def chains(self, underlying: str) -> list[models.Chain]:
         self._require_connected()

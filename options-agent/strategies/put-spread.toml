@@ -60,8 +60,8 @@ OPENING. For each allowed underlying that get_status lists:
    get_quotes on option symbols, so build them yourself from the chain's
    expiry and strikes: with SPY at 755, the puts from about 665 to 730, at
    most 40, e.g. "SPY   261218P00700000". Quote them in one call. An option
-   that comes back without a delta fills in if you quote it again; if most
-   still have none, open nothing and report it.
+   that comes back without a delta, or with "no quote yet", fills in if you
+   quote it again; if most still have none, open nothing and report it.
 3. Short put: the put whose delta is closest to -0.25, which must lie between
    -0.20 and -0.30. Long put: the put $5 below it. Both need a bid and an
    ask; if not, go to the next underlying.
