@@ -349,7 +349,7 @@ class IBKRBroker:
             # use the same one.
             existing = self._find(req.client_order_id, view.owner)
             if existing is not None:
-                return order_view(existing)
+                return await self._order_view(existing)
             a = await self._assess(view.owner, req)
             if a.refused:
                 log.info("refused %s's %s: %s", view.owner, req.client_order_id, a.refused)
@@ -357,18 +357,18 @@ class IBKRBroker:
             log.info("%s placing %s (opens=%s, max_loss=%s)", view.owner, req.model_dump_json(), a.opens, a.max_loss)
             trade = self.ib.placeOrder(a.contract, a.order)
             await _wait_acknowledged(trade)
-        placed = order_view(trade)
+        placed = await self._order_view(trade)
         log.info("order %s is %s: %s", a.order.orderRef, placed.broker_status, placed.message or "")
         return placed
 
-    def order(self, view: View, client_order_id: str) -> models.Order:
+    async def order(self, view: View, client_order_id: str) -> models.Order:
         self._require_connected()
         trade = self._find(client_order_id, None if view.sees_all else view.owner)
         if trade is None:
             raise NotFound(f"no order {client_order_id!r}")
-        return order_view(trade)
+        return await self._order_view(trade)
 
-    def cancel(self, view: View, client_order_id: str) -> models.Order:
+    async def cancel(self, view: View, client_order_id: str) -> models.Order:
         # Allowed on any account and under any limit: cancelling only reduces risk.
         self._require_connected()
         trade = self._find(client_order_id, None if view.sees_all else view.owner)
@@ -377,15 +377,31 @@ class IBKRBroker:
         if not trade.isDone():
             log.info("%s cancelling %s", view.owner, client_order_id)
             self.ib.cancelOrder(trade.order)
-        return order_view(trade)
+        return await self._order_view(trade)
 
-    def open_orders(self, view: View) -> list[models.Order]:
+    async def open_orders(self, view: View) -> list[models.Order]:
         self._require_connected()
         return [
-            order_view(t)
+            await self._order_view(t)
             for t in self.ib.openTrades()
             if (r := _parse_ref(t.order.orderRef)) and (view.sees_all or r.owner == view.owner)
         ]
+
+    async def _order_view(self, trade: Trade) -> models.Order:
+        """order_view, with the order's legs named by OCC symbol."""
+        view = order_view(trade)
+        c = trade.contract
+        try:
+            if c.secType == "BAG":
+                view.legs = [
+                    models.Leg(symbol=str(await self._symbol_for(leg.conId)), side=_side(leg.action), ratio=leg.ratio)
+                    for leg in c.comboLegs
+                ]
+            elif occ.is_option(c.localSymbol):
+                view.legs = [models.Leg(symbol=c.localSymbol, side=_side(trade.order.action))]
+        except ValueError:  # a leg IBKR would not name; the order is still worth showing
+            pass
+        return view
 
     async def strategy_status(self, owner: str) -> models.StrategyStatus:
         """A strategy's file, and how much of its limits it is using."""
@@ -849,6 +865,10 @@ async def _wait_acknowledged(trade: Trade, timeout: float = 3.0) -> None:
     deadline = loop.time() + timeout
     while trade.orderStatus.status in ("", "PendingSubmit", "ApiPending") and loop.time() < deadline:
         await asyncio.sleep(0.1)
+
+
+def _side(action: str) -> models.Side:
+    return models.Side.BUY if action == "BUY" else models.Side.SELL
 
 
 def _action(side: models.Side) -> str:

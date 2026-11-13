@@ -192,20 +192,20 @@ async def get_order(client_order_id: str, ctx: Context) -> models.Order:
     """One of your orders by the client_order_id it was placed with: its
     state (working, filled, cancelled, rejected), fills, and IBKR's last
     message."""
-    return broker.order(_view(ctx), client_order_id)
+    return await broker.order(_view(ctx), client_order_id)
 
 
 @mcp.tool()
 async def list_open_orders(ctx: Context) -> list[models.Order]:
-    """Your orders still working, including ones placed in earlier runs. To
-    the desk, every strategy's."""
-    return broker.open_orders(_view(ctx))
+    """Your orders still working, including ones placed in earlier runs,
+    each with its legs. To the desk, every strategy's."""
+    return await broker.open_orders(_view(ctx))
 
 
 @mcp.tool()
 async def cancel_order(client_order_id: str, ctx: Context) -> models.Order:
     """Cancel one of your working orders. Always allowed."""
-    return broker.cancel(_view(ctx), client_order_id)
+    return await broker.cancel(_view(ctx), client_order_id)
 
 
 mcp_app = mcp.streamable_http_app()  # creates mcp.session_manager, run in lifespan
@@ -344,17 +344,17 @@ async def place(req: models.OrderRequest, v: View = Depends(_caller)) -> models.
 
 @v1.get("/orders")
 async def open_orders(v: View = Depends(_caller)) -> list[models.Order]:
-    return broker.open_orders(v)
+    return await broker.open_orders(v)
 
 
 @v1.get("/orders/{client_order_id}")
 async def get_order_rest(client_order_id: str, v: View = Depends(_caller)) -> models.Order:
-    return broker.order(v, client_order_id)
+    return await broker.order(v, client_order_id)
 
 
 @v1.delete("/orders/{client_order_id}")
 async def cancel(client_order_id: str, v: View = Depends(_caller)) -> models.Order:
-    return broker.cancel(v, client_order_id)
+    return await broker.cancel(v, client_order_id)
 
 
 app.include_router(v1)

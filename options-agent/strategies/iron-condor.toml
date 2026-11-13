@@ -52,6 +52,9 @@ underlying and expiry in get_positions are one condor. For each condor:
    - the cost to close is at least three times the credit received (the loss
      has reached twice the credit);
    - 21 days or fewer are left to its expiry.
+   If none of these holds, leave the condor alone: place no order for it,
+   and cancel any closing order of yours for it still working. Never close
+   a condor for any other reason.
 4. To close: one order with all four legs the other way round (buy the
    shorts, sell the longs), quantity as held, limit_price the cost to close
    rounded up to the cent, never below 0.01, positive (you pay). Always close

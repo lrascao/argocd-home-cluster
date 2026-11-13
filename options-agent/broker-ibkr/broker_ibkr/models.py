@@ -82,6 +82,9 @@ class Order(BaseModel):
     limit_price: float | None  # same sign convention as the request
     avg_fill_price: float | None
     message: str | None  # the broker's last error or warning, e.g. why it rejected
+    # What the order trades, each leg with its side, as placed: tells a
+    # working order's strikes apart. Empty if the broker cannot name a leg.
+    legs: list[Leg] = []
 
 
 class OrderPreview(BaseModel):

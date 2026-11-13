@@ -126,3 +126,10 @@ def test_a_streamed_quote_has_filled_in_with_a_bid_an_ask_and_for_an_option_a_de
 def test_quotes_are_cached_under_one_spelling_of_each_symbol():
     assert _key(" spy ") == "SPY"
     assert _key("SPY261218P00450000") == _key("SPY   261218P00450000") == "SPY   261218P00450000"
+
+
+def test_an_order_names_no_legs_until_the_broker_fills_them_in():
+    # order_view knows only the trade; IBKRBroker._order_view adds the legs,
+    # which needs IBKR to name a combo's contract ids.
+    trade = Trade(contract=Contract(secType="BAG"), order=LimitOrder("BUY", 1, -0.95, orderRef=REF))
+    assert order_view(trade).legs == []

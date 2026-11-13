@@ -50,6 +50,9 @@ get_positions are one spread. For each spread:
    - the cost to close is at least three times the credit received (the loss
      has reached twice the credit);
    - 21 days or fewer are left to its expiry.
+   If none of these holds, leave the spread alone: place no order for it,
+   and cancel any closing order of yours for it still working. Never close
+   a spread for any other reason.
 4. To close: one order with the same two puts the other way round (buy the
    short put, sell the long put), quantity as held, limit_price the cost to
    close rounded up to the cent, never below 0.01, positive (you pay).
