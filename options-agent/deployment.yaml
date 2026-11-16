@@ -40,7 +40,7 @@ spec:
       # dies for good, ibcstart.sh exits and so does the container.
       - name: ib-gateway
         # Pin the digest `make release` prints: <tag>@sha256:<digest>.
-        image: registry.88288338.xyz/ib-gateway:0.1.0@sha256:d61703f52d552f991802bd387e315a189c1c29c122834a625fe17de6633acb25
+        image: registry.88288338.xyz/ib-gateway:0.1.1@sha256:c53c4e03a53809440cb00fc94c6c8b3e2fa25188741f53be8ab16274944dd0c1
         env:
         - name: TRADING_MODE
           value: paper
