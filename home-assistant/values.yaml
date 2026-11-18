@@ -158,14 +158,22 @@ home-assistant:
       # `mode: storage` here is the DEFAULT for anything not listed below, and it
       # is what keeps HACS in charge of frontend resources: resource_mode falls
       # back to this value, and resources declared in YAML while it says storage
-      # are ignored with a warning. Home Assistant 2026.6 marks that fallback
-      # deprecated and removes it in 2026.8, so this will want an explicit
-      # `resource_mode: storage` before then.
+      # are ignored with a warning. Home Assistant 2026.6 marked that fallback
+      # deprecated with breaks_in_ha_version 2026.8.0 -- but the removal only
+      # merged upstream on 2026-11-12 (core#191958), so it is NOT in 2026.11.2
+      # and the 2026.8 date above never happened. It lands in the release after
+      # this one, and when it does the top-level `mode:` becomes an ignored key
+      # with an error in the log, while `resource_mode` defaults to storage.
+      #
+      # So `resource_mode: storage` is now set explicitly below, ahead of that.
+      # It is exactly what the fallback already yields, which makes it a no-op
+      # today and the whole of the migration when the removal arrives.
       #
       # `map` is absent on purpose and cannot be added -- its url_path has no
       # hyphen. Energy is a built-in panel and has no Lovelace config at all.
       lovelace:
         mode: storage
+        resource_mode: storage
         dashboards:
           dashboard-climate:
             mode: yaml
