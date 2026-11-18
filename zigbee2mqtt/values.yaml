@@ -27,3 +27,17 @@ zigbee2mqtt:
       storageClassName: longhorn
     nodeSelector:
       kubernetes.io/hostname: "node3"
+
+    # -- Pinned here because the chart stopped shipping them. Up to chart
+    # -- 2.12.0 the defaults were requests AND limits both at 600Mi/200m,
+    # -- which put the pod in Guaranteed QoS; 2.14.x keeps the requests and
+    # -- drops the limits block entirely, so taking the new defaults would
+    # -- have quietly left z2m uncapped on node3. These are the old numbers,
+    # -- not new ones: this is a no-op against what was actually running.
+    resources:
+      requests:
+        memory: 600Mi
+        cpu: 200m
+      limits:
+        memory: 600Mi
+        cpu: 200m
