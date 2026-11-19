@@ -13,11 +13,25 @@ local:
   fqdn: vault.88288338.xyz
 
   # Pinned, not :latest. Vaultwarden implements the Bitwarden API and has to
-  # keep up with the clients: 1.37.0 is what added compatibility with client
-  # 2026.7.0. The phone app updates itself from the App Store and will happily
-  # outrun a server left behind, so this is a dependency that has to be walked
-  # forward deliberately rather than drifting on its own.
-  image: vaultwarden/server:1.37.3-alpine
+  # keep up with the clients: 1.37.5 is what web vault 2026.7.1+ needs to turn
+  # two-step login methods on or off, and 2026.9.0+ to take over an account
+  # through emergency access. The phone app updates itself from the App Store
+  # and will happily outrun a server left behind, so this is a dependency that
+  # has to be walked forward deliberately rather than drifting on its own.
+  #
+  # 1.37.4 and 1.37.5 are both security releases, and this name is public, so
+  # this is not one to sit on: 1.37.4 alone carries a High (8.1) organization
+  # member revocation advisory plus six lesser ones, 1.37.5 two Mediums.
+  #
+  # Two things 1.37.4/.5 changed that this chart depends on:
+  #   - X-Forwarded-For is now read rightmost-first (the first hop not in
+  #     IP_HEADER_TRUSTED_PROXIES) rather than leftmost. With envoy as the only
+  #     proxy and the pod CIDR trusted, that still resolves to the real client
+  #     -- but putting anything else in front means adding it there too.
+  #   - invalid config now aborts startup instead of being coerced. The
+  #     *_RATELIMIT_SECONDS / *_MAX_BURST values in the deployment are all
+  #     within the new bounds (>= 1, <= 65535), so nothing here needs changing.
+  image: vaultwarden/server:1.37.5-alpine
 
   storage:
     # The vault itself is tiny -- a few MB of SQLite. The headroom is for
