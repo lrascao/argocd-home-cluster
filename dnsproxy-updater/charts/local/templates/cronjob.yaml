@@ -15,6 +15,14 @@ spec:
           containers:
           - image: alpine:latest
             name: updater
+            # A CronJob is still a scheduling decision, and this one had no
+            # request at all. alpine plus entrypoint.sh; the comparable
+            # acme-cert-sync pod peaks at 4Mi, so 32Mi is already generous.
+            # See monitoring/charts/influxdb/templates/deployment.yaml for why
+            # these were added and why there is no limit.
+            resources:
+              requests:
+                memory: 32Mi
             env:
             - name: DNSPROXY_IP
               valueFrom:

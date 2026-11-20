@@ -19,6 +19,21 @@ spec:
       - env:
         name: influxdb
         image: influxdb:1.11.8-alpine
+        # Requested because an unrequested pod is invisible to the scheduler,
+        # not because this one is large. Measured on node3 2026-11-20:
+        # anon 115Mi, working set 94Mi, cgroup memory.peak 200Mi (that peak
+        # includes reclaimable page cache, so it is an overstatement of what
+        # needs reserving). 192Mi sits above the anon figure with room for the
+        # retention compactor without reserving the cache.
+        #
+        # Request only, no limit, here and in the three siblings: a request
+        # that is wrong mis-schedules, a limit that is wrong OOM-kills. See
+        # node3's 2026-11-19 replica exodus for why these went in -- 10 of its
+        # 32 pods declared no memory request, so the scheduler read the node as
+        # 49% requested while it ran at ~100% and thrashed itself into D-state.
+        resources:
+          requests:
+            memory: 192Mi
         ports:
         - name: api
           containerPort: 8086 

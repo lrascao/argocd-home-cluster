@@ -18,6 +18,14 @@ spec:
       containers:
       - name: grafana
         image: grafana/grafana:13.3.1
+        # Measured on node3 2026-11-20: anon 231Mi, working set 299Mi, cgroup
+        # memory.peak 608Mi. 384Mi rather than ~300: grafana carries an unusual
+        # 113Mi of page cache against its anon, and rendering a dashboard moves
+        # the working set well above idle. See influxdb's deployment.yaml for
+        # the sizing basis and why there is no limit.
+        resources:
+          requests:
+            memory: 384Mi
         ports:
         - containerPort: 3000
         env:

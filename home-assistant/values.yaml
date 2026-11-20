@@ -33,6 +33,23 @@ home-assistant:
     - name: OPENAI_BASE_URL
       value: http://llm-gateway.voice.svc.cluster.local:8000/v1
 
+  # The chart ships `resources: {}`, so this pod was scheduled as though it
+  # cost nothing -- and it is the largest unrequested consumer in the cluster.
+  # Measured on node3 2026-11-20: anon 512Mi, working set 535Mi, cgroup
+  # memory.peak 710Mi (that peak counts reclaimable page cache, so it is not
+  # the figure to reserve). 640Mi covers the anon working set with room for the
+  # recorder and a reload without reserving the cache.
+  #
+  # Request only, no limit. A request that is wrong mis-schedules; a limit that
+  # is wrong OOM-kills Home Assistant mid-automation. See node3's 2026-11-19
+  # replica exodus for why this went in: 10 of its 32 pods declared no memory
+  # request, the scheduler read the node as 49% requested while it ran at
+  # ~100%, and it thrashed into D-state until Longhorn declared it down and
+  # evacuated 21 replicas.
+  resources:
+    requests:
+      memory: 640Mi
+
   # The dashboards ConfigMap rendered by templates/dashboards-configmap.yaml,
   # mounted as a directory inside the PVC's /config. A ConfigMap volume is
   # read-only, which is exactly right for YAML-mode dashboards: Home Assistant
