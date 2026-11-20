@@ -9,7 +9,35 @@ spec:
   # IBKR allows one session per username: a second pod logging in with the
   # same paper username logs the first one out. So one replica, and Recreate
   # so a rollout never runs two at once.
-  replicas: 1
+  #
+  # PARKED at 0 since 2026-11-20. This was the largest pod in the cluster --
+  # 1427Mi measured, against 856Mi for the next one -- and it was doing
+  # nothing with it. The ledger (/data/ledger.db, table `fills`) holds 12
+  # rows, all from 2026-11-13 15:09-16:05Z: one hand-run proving session, and
+  # not a byte written since. Nothing wakes it either, because the cron
+  # bindings that would are not applied -- `diagrid component list` shows only
+  # kvstore, llm-vllm, llm-openai and pubsub, so the schedules in
+  # catalyst/options-iron-condor-schedule.yaml and
+  # catalyst/options-put-spread-schedule.yaml are still waiting on the
+  # controlplane change their own comments describe. All Catalyst does
+  # meanwhile is enumerate the broker's tools: 4309 MCP requests in a 5-hour
+  # window, every one of them ListTools/Ping/ListResources/ListPrompts, and
+  # not a single CallTool.
+  #
+  # It sat on node3, the node with the least free memory and the one Longhorn
+  # keeps declaring down for memory starvation (see the evictionHard comment
+  # in ansible-local-network's kube-kubelet-config.yaml.j2). Giving 1427Mi
+  # back takes node3 from the tightest of the three 7.5GiB boxes to the
+  # roomiest, which is what the Longhorn replica refill needs.
+  #
+  # To bring it back, set this to 1. Everything else survives being parked:
+  # the sealed secret, the broker-ledger PVC and its 12 fills. The moment
+  # worth doing it is when `diagrid component list` shows those two
+  # schedules, because until then it cannot trade except by running an agent
+  # by hand. Note the Nov 13 session left open paper positions (Dec 18 and
+  # Dec 24 SPY/QQQ legs); nothing monitors or closes them, so while it is
+  # parked they simply expire.
+  replicas: 0
   strategy:
     type: Recreate
   selector:
