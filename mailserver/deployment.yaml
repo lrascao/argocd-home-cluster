@@ -56,6 +56,27 @@ spec:
           value: luis@88288338.xyz
         - name: LOG_LEVEL
           value: info
+        # Rotate daily, not weekly. The image's defaults (weekly, rotate 4)
+        # are what /etc/logrotate.d/maillog had, and with `delaycompress` that
+        # leaves the newest rotation UNCOMPRESSED for a full week -- measured
+        # 2026-11-24 as a single 3.9 GiB mail.log.1 plus a 1.3 GiB live
+        # mail.log, i.e. 5.8 GiB of a 10 Gi volume whose actual mail is 244 KiB.
+        # Daily caps that uncompressed pair at ~2 days instead of ~2 weeks.
+        # LOG_LEVEL above does NOT help here: it governs the image's own
+        # scripts, not postfix's connect/disconnect lines.
+        #
+        # This caps the on-disk peak only. The generation rate itself was
+        # haproxy's own health checks (~150k lines/hour), fixed by `inter 30s`
+        # on the mail backends in ansible-local-network
+        # playbooks/loadbalancer/templates/haproxy.cfg.j2 -- the two changes
+        # are a pair, and the comment there carries the numbers.
+        - name: LOGROTATE_INTERVAL
+          value: daily
+        # 7 dailies rather than the default 4, so a week of history survives.
+        # At the post-fix rate (~35 MiB/day) that is ~250 MiB in total, against
+        # the 5.8 GiB it replaces.
+        - name: LOGROTATE_COUNT
+          value: "7"
         # Pods on this cluster are IPv4-only (flannel 10.200.0.0/16, no global
         # v6 address). Postfix and dovecot default to `all` and will throw
         # errors trying to bind/resolve over IPv6 if left alone.
